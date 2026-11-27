@@ -6,8 +6,10 @@ import {
   Circle,
   Clock3,
   ListTodo,
+  Pencil,
   Plus,
   Search,
+  Trash2,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
@@ -36,21 +38,36 @@ type TasksResponse = {
 // Share in-flight reads so React StrictMode does not request the same project twice.
 const projectTasksRequests = new Map<string, Promise<TasksResponse>>();
 
-function getProjectTasks(projectId: string): Promise<TasksResponse> {
-  const existingRequest = projectTasksRequests.get(projectId);
+function getProjectTasks(
+  projectId: string,
+  status: TaskStatus | "all",
+  search: string,
+): Promise<TasksResponse> {
+  const query = new URLSearchParams();
+  if (status !== "all") {
+    query.set("status", status);
+  }
+  if (search) {
+    query.set("search", search);
+  }
+
+  const queryString = query.toString();
+  const requestKey = `${projectId}?${queryString}`;
+  const path = `/api/projects/${encodeURIComponent(projectId)}/tasks${
+    queryString ? `?${queryString}` : ""
+  }`;
+  const existingRequest = projectTasksRequests.get(requestKey);
   if (existingRequest) {
     return existingRequest;
   }
 
   const request = api
-    .get<TasksResponse>(
-      `/api/projects/${encodeURIComponent(projectId)}/tasks`,
-    )
+    .get<TasksResponse>(path)
     .finally(() => {
-      projectTasksRequests.delete(projectId);
+      projectTasksRequests.delete(requestKey);
     });
 
-  projectTasksRequests.set(projectId, request);
+  projectTasksRequests.set(requestKey, request);
   return request;
 }
 
@@ -60,6 +77,14 @@ type CreateTaskRequest = {
   status: TaskStatus;
   priority: TaskPriority;
   dueDate?: string;
+};
+
+type EditTaskRequest = {
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate: string | null;
 };
 
 type CreateTaskFormValues = {
@@ -94,16 +119,37 @@ function ProjectDetailsPage() {
   const { projectId } = useParams();
   const [taskResult, setTaskResult] = useState<{
     projectId: string;
+    statusFilter: TaskStatus | "all";
+    search: string;
     tasks: Task[];
     errorMessage?: string;
   } | null>(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [taskForm, setTaskForm] =
     useState<CreateTaskFormValues>(initialTaskForm);
-  const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState("");
+  const [isSavingTask, setIsSavingTask] = useState(false);
+  const [taskFormError, setTaskFormError] = useState("");
+  const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<{
+    taskId: number;
+    message: string;
+  } | null>(null);
+  const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
+  const [statusUpdateError, setStatusUpdateError] = useState<{
+    taskId: number;
+    message: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [search]);
 
   useEffect(() => {
     if (!projectId) {
@@ -112,16 +158,23 @@ function ProjectDetailsPage() {
 
     let active = true;
 
-    getProjectTasks(projectId)
+    getProjectTasks(projectId, statusFilter, debouncedSearch)
       .then(({ tasks: projectTasks }) => {
         if (active) {
-          setTaskResult({ projectId, tasks: projectTasks });
+          setTaskResult({
+            projectId,
+            statusFilter,
+            search: debouncedSearch,
+            tasks: projectTasks,
+          });
         }
       })
       .catch((error: unknown) => {
         if (active) {
           setTaskResult({
             projectId,
+            statusFilter,
+            search: debouncedSearch,
             tasks: [],
             errorMessage:
               error instanceof Error
@@ -134,10 +187,15 @@ function ProjectDetailsPage() {
     return () => {
       active = false;
     };
-  }, [projectId]);
+  }, [projectId, statusFilter, debouncedSearch]);
 
   const currentTaskResult =
-    taskResult?.projectId === projectId ? taskResult : null;
+    taskResult &&
+    taskResult.projectId === projectId &&
+    taskResult.statusFilter === statusFilter &&
+    taskResult.search === debouncedSearch
+      ? taskResult
+      : null;
   const tasks = currentTaskResult?.tasks ?? [];
   const displayErrorMessage = projectId
     ? currentTaskResult?.errorMessage ?? ""
@@ -150,74 +208,201 @@ function ProjectDetailsPage() {
   const progress =
     tasks.length === 0 ? 0 : Math.round((completedTasks / tasks.length) * 100);
   const projectTitle = projectId ? `Project ${projectId}` : "Project";
-  const visibleTasks = tasks.filter((task) => {
-    const matchesSearch = `${task.title} ${task.description}`
-      .toLowerCase()
-      .includes(search.trim().toLowerCase());
-    const matchesStatus =
-      statusFilter === "all" || task.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const hasActiveFilters = statusFilter !== "all" || Boolean(debouncedSearch);
+  const isTaskActionPending =
+    isSavingTask || deletingTaskId !== null || updatingTaskId !== null;
+
+  function updateTaskInCurrentResults(task: Task) {
+    setTaskResult((current) => {
+      if (
+        !current ||
+        current.projectId !== projectId ||
+        current.statusFilter !== statusFilter ||
+        current.search !== debouncedSearch
+      ) {
+        return current;
+      }
+
+      const remainingTasks = current.tasks.filter(
+        (currentTask) => currentTask.id !== task.id,
+      );
+      const matchesStatus =
+        statusFilter === "all" || task.status === statusFilter;
+      const matchesSearch =
+        !debouncedSearch ||
+        task.title.toLowerCase().includes(debouncedSearch.toLowerCase());
+
+      return {
+        ...current,
+        tasks:
+          matchesStatus && matchesSearch
+            ? [task, ...remainingTasks]
+            : remainingTasks,
+      };
+    });
+  }
+
+  async function updateTaskStatus(task: Task, status: TaskStatus) {
+    if (
+      isTaskActionPending ||
+      editingTaskId !== null ||
+      task.status === status
+    ) {
+      return;
+    }
+
+    setStatusUpdateError(null);
+    setUpdatingTaskId(task.id);
+
+    try {
+      const { task: updatedTask } = await api.patch<
+        { task: Task },
+        { status: TaskStatus }
+      >(`/api/tasks/${task.id}/status`, { status });
+      updateTaskInCurrentResults(updatedTask);
+    } catch (error: unknown) {
+      setStatusUpdateError({
+        taskId: task.id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to update task status. Please try again.",
+      });
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  }
 
   function updateTaskForm<Field extends keyof CreateTaskFormValues>(
     field: Field,
     value: CreateTaskFormValues[Field],
   ) {
     setTaskForm((current) => ({ ...current, [field]: value }));
-    setCreateError("");
+    setTaskFormError("");
   }
 
-  async function createTask(event: FormEvent<HTMLFormElement>) {
+  function closeTaskForm() {
+    setShowCreateForm(false);
+    setEditingTaskId(null);
+    setTaskForm(initialTaskForm);
+    setTaskFormError("");
+  }
+
+  function openEditForm(task: Task) {
+    setTaskForm({
+      title: task.title,
+      description: task.description ?? "",
+      status: task.status,
+      priority: task.priority,
+      dueDate: task.dueDate ?? "",
+    });
+    setEditingTaskId(task.id);
+    setTaskFormError("");
+    setShowCreateForm(true);
+  }
+
+  async function saveTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isCreating || !projectId) {
+    if (isTaskActionPending || !projectId) {
       return;
     }
 
     const title = taskForm.title.trim();
     if (!title) {
-      setCreateError("Task title is required.");
+      setTaskFormError("Task title is required.");
       return;
     }
     if (title.length > 200) {
-      setCreateError("Task title must be 200 characters or fewer.");
+      setTaskFormError("Task title must be 200 characters or fewer.");
       return;
     }
 
-    setCreateError("");
-    setIsCreating(true);
-
-    const requestBody: CreateTaskRequest = {
-      title,
-      description: taskForm.description || undefined,
-      status: taskForm.status,
-      priority: taskForm.priority,
-      dueDate: taskForm.dueDate || undefined,
-    };
+    setTaskFormError("");
+    setIsSavingTask(true);
 
     try {
-      const { task } = await api.post<
-        { task: Task },
-        CreateTaskRequest
-      >(
-        `/api/projects/${encodeURIComponent(projectId)}/tasks`,
-        requestBody,
-      );
+      if (editingTaskId !== null) {
+        const { task } = await api.patch<{ task: Task }, EditTaskRequest>(
+          `/api/tasks/${editingTaskId}`,
+          {
+            title,
+            description: taskForm.description || null,
+            status: taskForm.status,
+            priority: taskForm.priority,
+            dueDate: taskForm.dueDate || null,
+          },
+        );
 
-      setTaskResult((current) =>
-        current?.projectId === projectId
-          ? { ...current, tasks: [task, ...current.tasks] }
-          : current,
-      );
-      setTaskForm(initialTaskForm);
-      setShowCreateForm(false);
+        updateTaskInCurrentResults(task);
+      } else {
+        const requestBody: CreateTaskRequest = {
+          title,
+          description: taskForm.description || undefined,
+          status: taskForm.status,
+          priority: taskForm.priority,
+          dueDate: taskForm.dueDate || undefined,
+        };
+        const { task } = await api.post<
+          { task: Task },
+          CreateTaskRequest
+        >(
+          `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+          requestBody,
+        );
+
+        updateTaskInCurrentResults(task);
+      }
+
+      closeTaskForm();
     } catch (error: unknown) {
-      setCreateError(
+      setTaskFormError(
         error instanceof Error
           ? error.message
-          : "Unable to create the task. Please try again.",
+          : "Unable to save the task. Please try again.",
       );
     } finally {
-      setIsCreating(false);
+      setIsSavingTask(false);
+    }
+  }
+
+  async function deleteTask(task: Task) {
+    if (isTaskActionPending) {
+      return;
+    }
+    if (!window.confirm(`Delete "${task.title}"?`)) {
+      return;
+    }
+
+    setDeleteError(null);
+    setDeletingTaskId(task.id);
+
+    try {
+      await api.delete<{ message: string }>(`/api/tasks/${task.id}`);
+      setTaskResult((current) =>
+        current &&
+        current.projectId === projectId &&
+        current.statusFilter === statusFilter &&
+        current.search === debouncedSearch
+          ? {
+              ...current,
+              tasks: current.tasks.filter((item) => item.id !== task.id),
+            }
+          : current,
+      );
+
+      if (editingTaskId === task.id) {
+        closeTaskForm();
+      }
+    } catch (error: unknown) {
+      setDeleteError({
+        taskId: task.id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to delete the task. Please try again.",
+      });
+    } finally {
+      setDeletingTaskId(null);
     }
   }
 
@@ -270,7 +455,7 @@ function ProjectDetailsPage() {
               aria-label="Project task summary"
             >
               <SummaryCard
-                label="Total tasks"
+                label={hasActiveFilters ? "Matching tasks" : "Total tasks"}
                 value={tasks.length}
                 icon={<ListTodo className="size-4" aria-hidden="true" />}
               />
@@ -289,9 +474,12 @@ function ProjectDetailsPage() {
             <section className="mt-8 rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="font-semibold">Project progress</h2>
+                  <h2 className="font-semibold">
+                    {hasActiveFilters ? "Filtered task progress" : "Project progress"}
+                  </h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {completedTasks} of {tasks.length} tasks completed
+                    {completedTasks} of {tasks.length}{" "}
+                    {hasActiveFilters ? "matching tasks" : "tasks"} completed
                   </p>
                 </div>
                 <span className="text-lg font-semibold">{progress}%</span>
@@ -332,6 +520,7 @@ function ProjectDetailsPage() {
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search tasks"
+                  maxLength={200}
                   className="pl-9 sm:w-56"
                 />
               </label>
@@ -356,14 +545,17 @@ function ProjectDetailsPage() {
                   !projectId ||
                   isLoading ||
                   Boolean(displayErrorMessage) ||
-                  isCreating
+                  isTaskActionPending
                 }
                 onClick={() => {
                   if (showCreateForm) {
-                    setTaskForm(initialTaskForm);
+                    closeTaskForm();
+                    return;
                   }
-                  setCreateError("");
-                  setShowCreateForm((isOpen) => !isOpen);
+                  setEditingTaskId(null);
+                  setTaskForm(initialTaskForm);
+                  setTaskFormError("");
+                  setShowCreateForm(true);
                 }}
               >
                 <Plus className="size-4" aria-hidden="true" />
@@ -374,10 +566,12 @@ function ProjectDetailsPage() {
 
           {showCreateForm && (
             <form
-              onSubmit={createTask}
+              onSubmit={saveTask}
               className="mb-5 rounded-2xl border bg-card p-5 shadow-sm sm:p-6"
             >
-              <h3 className="font-semibold">Create a task</h3>
+              <h3 className="font-semibold">
+                {editingTaskId === null ? "Create a task" : "Edit task"}
+              </h3>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="task-title">Title</Label>
@@ -389,7 +583,7 @@ function ProjectDetailsPage() {
                       updateTaskForm("title", event.target.value)
                     }
                     placeholder="What needs to be done?"
-                    disabled={isCreating}
+                    disabled={isTaskActionPending}
                   />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
@@ -404,7 +598,7 @@ function ProjectDetailsPage() {
                       updateTaskForm("description", event.target.value)
                     }
                     placeholder="Add a few details"
-                    disabled={isCreating}
+                    disabled={isTaskActionPending}
                   />
                 </div>
                 <div className="space-y-2">
@@ -419,7 +613,7 @@ function ProjectDetailsPage() {
                         event.target.value as TaskStatus,
                       )
                     }
-                    disabled={isCreating}
+                    disabled={isTaskActionPending}
                     className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="todo">To do</option>
@@ -439,7 +633,7 @@ function ProjectDetailsPage() {
                         event.target.value as TaskPriority,
                       )
                     }
-                    disabled={isCreating}
+                    disabled={isTaskActionPending}
                     className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="low">Low</option>
@@ -459,33 +653,33 @@ function ProjectDetailsPage() {
                     onChange={(event) =>
                       updateTaskForm("dueDate", event.target.value)
                     }
-                    disabled={isCreating}
+                    disabled={isTaskActionPending}
                   />
                 </div>
               </div>
-              {createError && (
+              {taskFormError && (
                 <p
                   className="mt-4 text-sm text-destructive"
                   role="alert"
                 >
-                  {createError}
+                  {taskFormError}
                 </p>
               )}
               <div className="mt-5 flex justify-end gap-2">
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={isCreating}
-                  onClick={() => {
-                    setTaskForm(initialTaskForm);
-                    setCreateError("");
-                    setShowCreateForm(false);
-                  }}
+                  disabled={isTaskActionPending}
+                  onClick={closeTaskForm}
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={isCreating}>
-                  {isCreating ? "Creating..." : "Create task"}
+                <Button type="submit" disabled={isTaskActionPending}>
+                  {isSavingTask
+                    ? "Saving..."
+                    : editingTaskId === null
+                      ? "Create task"
+                      : "Save changes"}
                 </Button>
               </div>
             </form>
@@ -502,24 +696,24 @@ function ProjectDetailsPage() {
             >
               {displayErrorMessage}
             </p>
-          ) : visibleTasks.length === 0 ? (
+          ) : tasks.length === 0 ? (
             <div className="rounded-2xl border border-dashed bg-background px-5 py-14 text-center">
               <Circle
                 className="mx-auto size-9 text-muted-foreground"
                 aria-hidden="true"
               />
               <h3 className="mt-4 font-semibold">
-                {tasks.length === 0 ? "No tasks yet" : "No matching tasks"}
+                {hasActiveFilters ? "No matching tasks" : "No tasks yet"}
               </h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                {tasks.length === 0
-                  ? "There are no tasks in this project yet."
-                  : "Try changing the search or status filter."}
+                {hasActiveFilters
+                  ? "Try changing the search or status filter."
+                  : "There are no tasks in this project yet."}
               </p>
             </div>
           ) : (
             <div className="space-y-3">
-              {visibleTasks.map((task) => (
+              {tasks.map((task) => (
                 <article
                   key={task.id}
                   className="flex flex-col gap-4 rounded-2xl border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5"
@@ -567,12 +761,69 @@ function ProjectDetailsPage() {
                     </div>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2 pl-8 sm:pl-0">
-                    <Badge
-                      variant={task.status === "done" ? "default" : "secondary"}
-                    >
-                      {statusLabels[task.status]}
-                    </Badge>
+                  <div className="flex shrink-0 flex-col items-start gap-2 pl-8 sm:items-end sm:pl-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={task.status}
+                        onChange={(event) =>
+                          void updateTaskStatus(
+                            task,
+                            event.target.value as TaskStatus,
+                          )
+                        }
+                        disabled={
+                          isTaskActionPending || editingTaskId !== null
+                        }
+                        aria-label={`Status for ${task.title}`}
+                        className="h-9 rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {Object.entries(statusLabels).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                      {updatingTaskId === task.id && (
+                        <span
+                          className="text-xs text-muted-foreground"
+                          role="status"
+                        >
+                          Updating...
+                        </span>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isTaskActionPending}
+                        onClick={() => openEditForm(task)}
+                        aria-label={`Edit ${task.title}`}
+                      >
+                        <Pencil aria-hidden="true" />
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        disabled={isTaskActionPending}
+                        onClick={() => void deleteTask(task)}
+                        aria-label={`Delete ${task.title}`}
+                      >
+                        <Trash2 aria-hidden="true" />
+                        {deletingTaskId === task.id ? "Deleting..." : "Delete"}
+                      </Button>
+                    </div>
+                    {deleteError?.taskId === task.id && (
+                      <p className="text-sm text-destructive" role="alert">
+                        {deleteError.message}
+                      </p>
+                    )}
+                    {statusUpdateError?.taskId === task.id && (
+                      <p className="text-sm text-destructive" role="alert">
+                        {statusUpdateError.message}
+                      </p>
+                    )}
                   </div>
                 </article>
               ))}
