@@ -36,8 +36,17 @@ type CreateProjectResponse = {
   project: Pick<Project, "id" | "name" | "description">;
 };
 
+type RenameProjectRequest = {
+  name: string;
+};
+
+type RenameProjectResponse = {
+  project: Pick<Project, "id" | "name">;
+};
+
 let projectsRequest: Promise<ProjectsResponse> | null = null;
 
+// Reuse a pending request so React StrictMode does not load projects twice.
 function getProjects(): Promise<ProjectsResponse> {
   if (!projectsRequest) {
     projectsRequest = api
@@ -57,6 +66,11 @@ function ProjectsPage() {
   const [isCreateFormOpen, setIsCreateFormOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [renamingProjectId, setRenamingProjectId] = useState<number | null>(
+    null,
+  );
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameError, setRenameError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -96,6 +110,7 @@ function ProjectsPage() {
   ).length;
   const projectsWithoutTasks = projects.length - projectsWithTasks;
 
+  // Create the project on the server, then add it to the page without reloading.
   async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isCreating) {
@@ -127,6 +142,7 @@ function ProjectsPage() {
 
       setProjects((currentProjects) => [
         ...currentProjects,
+        // The create endpoint does not include a task count.
         { ...project, taskCount: 0 },
       ]);
       form.reset();
@@ -139,6 +155,52 @@ function ProjectsPage() {
       );
     } finally {
       setIsCreating(false);
+    }
+  }
+
+  // Save the new name, then update just that project's card.
+  async function renameProject(
+    projectId: number,
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    if (isRenaming) {
+      return;
+    }
+
+    const formData = new FormData(event.currentTarget);
+    const name = String(formData.get("name") ?? "").trim();
+
+    if (!name) {
+      setRenameError("Project name is required.");
+      return;
+    }
+
+    setIsRenaming(true);
+    setRenameError("");
+
+    try {
+      const { project: updatedProject } = await api.patch<
+        RenameProjectResponse,
+        RenameProjectRequest
+      >(`/api/projects/${projectId}`, { name });
+
+      setProjects((currentProjects) =>
+        currentProjects.map((project) =>
+          project.id === updatedProject.id
+            ? { ...project, name: updatedProject.name }
+            : project,
+        ),
+      );
+      setRenamingProjectId(null);
+    } catch (error) {
+      setRenameError(
+        error instanceof Error
+          ? error.message
+          : "Unable to rename the project. Please try again.",
+      );
+    } finally {
+      setIsRenaming(false);
     }
   }
 
@@ -366,14 +428,73 @@ function ProjectsPage() {
                           {project.description ?? "No description provided."}
                         </p>
 
+                        {renamingProjectId === project.id && (
+                          <form
+                            onSubmit={(event) =>
+                              renameProject(project.id, event)
+                            }
+                            className="mt-4 space-y-3"
+                          >
+                            <div className="space-y-2">
+                              <Label htmlFor={`project-name-${project.id}`}>
+                                Project name
+                              </Label>
+                              <Input
+                                id={`project-name-${project.id}`}
+                                name="name"
+                                defaultValue={project.name}
+                                maxLength={150}
+                                required
+                                autoFocus
+                                disabled={isRenaming}
+                              />
+                            </div>
+                            {renameError && (
+                              <p
+                                className="text-sm text-destructive"
+                                role="alert"
+                              >
+                                {renameError}
+                              </p>
+                            )}
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={isRenaming}
+                                onClick={() => {
+                                  setRenamingProjectId(null);
+                                  setRenameError("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                type="submit"
+                                size="sm"
+                                disabled={isRenaming}
+                              >
+                                {isRenaming ? "Saving..." : "Save name"}
+                              </Button>
+                            </div>
+                          </form>
+                        )}
+
                         <div className="mt-auto flex justify-end gap-1 pt-5">
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={`Edit ${project.name}`}
-                            title="Project editing will be added later"
-                            disabled
+                            aria-label={`Rename ${project.name}`}
+                            title="Rename project"
+                            disabled={isRenaming}
+                            onClick={() => {
+                              setRenameError("");
+                              setRenamingProjectId((currentId) =>
+                                currentId === project.id ? null : project.id,
+                              );
+                            }}
                           >
                             <Pencil aria-hidden="true" />
                           </Button>
