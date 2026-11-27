@@ -1,29 +1,27 @@
 
-// Applies the initial SQL migration to the configured PostgreSQL database.
 import { Pool } from "pg";
 import "dotenv/config";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is not configured.");
+}
+
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT),
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  ssl:
-    process.env.DB_SSL === "true"
-      ? { rejectUnauthorized: false }
-      : false,
+  connectionString: databaseUrl,
 });
 
 async function migrate() {
   let client;
+  let transactionStarted = false;
 
   try {
     client = await pool.connect();
 
-    // Verify the connected database
+    // Verify the connected database.
     const result = await client.query(`
       SELECT current_database() AS database,
              current_user AS username,
@@ -32,27 +30,76 @@ async function migrate() {
 
     console.log("Database connection verified:", result.rows[0]);
 
-    if (result.rows[0].database !== "taskboard") {
-      throw new Error("Connected to an unexpected database!");
+    // Allow migrations only on the Neon database.
+    if (result.rows[0].database !== "neondb") {
+      throw new Error(
+        "Migration cancelled: Expected the Neon database 'neondb'."
+      );
     }
 
-    const migrationPath = path.resolve(
+    // Create migration history table if it doesn't exist.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS taskboard_migrations (
+        migration_name VARCHAR(255) PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    const migrationDirectory = path.resolve(
       process.cwd(),
-      "drizzle",
-      "0000_talented_captain_midlands.sql"
+      "drizzle"
     );
 
-    const sql = await readFile(migrationPath, "utf-8");
+    // Find SQL migration files.
+    const files = (await readdir(migrationDirectory))
+      .filter((file) => file.endsWith(".sql"))
+      .sort();
 
-    console.log("Migration file found:", migrationPath);
+    if (files.length === 0) {
+      console.log("No migration files found.");
+      return;
+    }
 
-    await client.query("BEGIN");
-    await client.query(sql);
-    await client.query("COMMIT");
+    for (const file of files) {
+      // Check whether this migration was already applied.
+      const existing = await client.query(
+        `SELECT migration_name
+         FROM taskboard_migrations
+         WHERE migration_name = $1`,
+        [file]
+      );
 
-    console.log("Migration applied successfully!");
+      if (existing.rowCount && existing.rowCount > 0) {
+        console.log(`Skipping already applied migration: ${file}`);
+        continue;
+      }
+
+      const migrationPath = path.join(migrationDirectory, file);
+      const sql = await readFile(migrationPath, "utf-8");
+
+      console.log(`Applying migration: ${file}`);
+
+      await client.query("BEGIN");
+      transactionStarted = true;
+
+      await client.query(sql);
+
+      // Record migration only after successful execution.
+      await client.query(
+        `INSERT INTO taskboard_migrations (migration_name)
+         VALUES ($1)`,
+        [file]
+      );
+
+      await client.query("COMMIT");
+      transactionStarted = false;
+
+      console.log(`Migration applied successfully: ${file}`);
+    }
+
+    console.log("All migrations completed.");
   } catch (error) {
-    if (client) {
+    if (client && transactionStarted) {
       await client.query("ROLLBACK");
     }
 
