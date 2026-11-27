@@ -5,6 +5,7 @@ import {
   Clock3,
   FolderKanban,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Plus,
   Trash2,
@@ -13,11 +14,27 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import LogoutButton from "@/components/LogoutButton";
 import { api, ApiError } from "@/lib/api";
 import type { AuthOutletContext } from "@/services/authService";
+import { toast } from "sonner";
 
 type Project = {
   id: number;
@@ -134,6 +151,7 @@ function ProjectsPage() {
   const [deletingProjectId, setDeletingProjectId] = useState<number | null>(
     null,
   );
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [deleteError, setDeleteError] = useState<{
     projectId: number;
     message: string;
@@ -216,6 +234,7 @@ function ProjectsPage() {
       ]);
       form.reset();
       setIsCreateFormOpen(false);
+      toast.success("Project created.");
     } catch (error) {
       const errors = getProjectFormErrors(
         error,
@@ -265,6 +284,7 @@ function ProjectsPage() {
         ),
       );
       setRenamingProjectId(null);
+      toast.success("Project renamed.");
     } catch (error) {
       const errors = getProjectFormErrors(
         error,
@@ -283,14 +303,6 @@ function ProjectsPage() {
       return;
     }
 
-    // Confirm first because deleting a project also deletes its tasks.
-    const confirmed = window.confirm(
-      `Delete "${project.name}" and its tasks? This action cannot be undone.`,
-    );
-    if (!confirmed) {
-      return;
-    }
-
     setDeletingProjectId(project.id);
     setDeleteError(null);
 
@@ -300,6 +312,7 @@ function ProjectsPage() {
       setProjects((currentProjects) =>
         currentProjects.filter((currentProject) => currentProject.id !== project.id),
       );
+      toast.success("Project deleted.");
     } catch (error) {
       setDeleteError({
         projectId: project.id,
@@ -310,6 +323,7 @@ function ProjectsPage() {
       });
     } finally {
       setDeletingProjectId(null);
+      setProjectToDelete(null);
     }
   }
 
@@ -536,9 +550,9 @@ function ProjectsPage() {
                     const hasTasks = project.taskCount > 0;
 
                     return (
-                      <article
+                      <Card
                         key={project.id}
-                        className="flex min-w-0 flex-col rounded-2xl border bg-card p-5 shadow-sm transition-shadow hover:shadow-md sm:p-6"
+                        className="flex min-w-0 flex-col rounded-2xl p-5 transition-shadow hover:shadow-md sm:p-6"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-center gap-3">
@@ -650,46 +664,54 @@ function ProjectsPage() {
                         )}
 
                         <div className="mt-auto flex justify-end gap-1 pt-5">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Rename ${project.name}`}
-                            title="Rename project"
-                            disabled={isRenaming || deletingProjectId !== null}
-                            onClick={() => {
-                              setRenameError("");
-                              setRenameFieldErrors({});
-                              setRenamingProjectId((currentId) =>
-                                currentId === project.id ? null : project.id,
-                              );
-                            }}
-                          >
-                            <Pencil aria-hidden="true" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={
-                              deletingProjectId === project.id
-                                ? `Deleting ${project.name}`
-                                : `Delete ${project.name}`
-                            }
-                            title={
-                              deletingProjectId === project.id
-                                ? "Deleting project..."
-                                : "Delete project"
-                            }
-                            disabled={deletingProjectId !== null}
-                            onClick={() => deleteProject(project)}
-                          >
-                            {deletingProjectId === project.id ? (
-                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                            ) : (
-                              <Trash2 aria-hidden="true" />
-                            )}
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label={`Actions for ${project.name}`}
+                                  disabled={
+                                    isRenaming || deletingProjectId !== null
+                                  }
+                                />
+                              }
+                            >
+                              {deletingProjectId === project.id ? (
+                                <Loader2
+                                  className="size-4 animate-spin"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <MoreHorizontal
+                                  className="size-4"
+                                  aria-hidden="true"
+                                />
+                              )}
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                disabled={isRenaming}
+                                onClick={() => {
+                                  setRenameError("");
+                                  setRenameFieldErrors({});
+                                  setRenamingProjectId(project.id);
+                                }}
+                              >
+                                <Pencil aria-hidden="true" />
+                                Rename
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                disabled={deletingProjectId !== null}
+                                onClick={() => setProjectToDelete(project)}
+                              >
+                                <Trash2 aria-hidden="true" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                           <Link
                             to={`/projects/${project.id}`}
                             className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-sm font-medium text-primary hover:bg-primary/10"
@@ -701,7 +723,7 @@ function ProjectsPage() {
                             />
                           </Link>
                         </div>
-                      </article>
+                      </Card>
                     );
                   })}
                 </div>
@@ -710,6 +732,46 @@ function ProjectsPage() {
           </>
         )}
       </main>
+      <Dialog
+        open={projectToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && deletingProjectId === null) {
+            setProjectToDelete(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete project?</DialogTitle>
+            <DialogDescription>
+              Deleting &quot;{projectToDelete?.name}&quot; will also delete its
+              tasks. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deletingProjectId !== null}
+              onClick={() => setProjectToDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingProjectId !== null || projectToDelete === null}
+              onClick={() => {
+                if (projectToDelete) {
+                  void deleteProject(projectToDelete);
+                }
+              }}
+            >
+              {deletingProjectId !== null ? "Deleting..." : "Delete project"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -722,7 +784,7 @@ type SummaryCardProps = {
 
 function SummaryCard({ label, value, icon }: SummaryCardProps) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border bg-card p-4">
+    <Card className="flex items-center gap-3 p-4">
       <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
         {icon}
       </span>
@@ -730,7 +792,7 @@ function SummaryCard({ label, value, icon }: SummaryCardProps) {
         <p className="text-xs text-muted-foreground">{label}</p>
         <p className="mt-0.5 text-lg font-semibold">{value}</p>
       </div>
-    </div>
+    </Card>
   );
 }
 

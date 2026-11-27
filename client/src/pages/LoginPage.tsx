@@ -5,6 +5,7 @@ import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { Form, FormField } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { AuthOutletContext } from "@/services/authService";
@@ -21,17 +22,17 @@ export default function LoginPage() {
   const [formMessage, setFormMessage] = useState("");
   const navigate = useNavigate();
   const { setAuthenticatedUser } = useOutletContext<AuthOutletContext>();
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<LoginFormValues>({
+  const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
       email: "",
       password: "",
     },
   });
+  const {
+    handleSubmit,
+    formState: { isSubmitting },
+  } = form;
 
   async function onSubmit(values: LoginFormValues) {
     setFormMessage("");
@@ -63,59 +64,73 @@ export default function LoginPage() {
         </div>
 
         <div className="rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
-          <form
-            noValidate
-            onSubmit={handleSubmit(onSubmit)}
-            className="space-y-5"
-          >
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                placeholder="you@example.com"
-                aria-invalid={Boolean(errors.email)}
-                {...register("email")}
-              />
-              {errors.email && (
-                <p className="text-sm text-destructive" role="alert">
-                  {errors.email.message}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                placeholder="Enter your password"
-                aria-invalid={Boolean(errors.password)}
-                {...register("password")}
-              />
-              {errors.password && (
-                <p className="text-sm text-destructive" role="alert">
-                  {errors.password.message}
-                </p>
-              )}
-            </div>
-
-            <Button
-              type="submit"
-              className="h-10 w-full"
-              disabled={isSubmitting}
+          <Form {...form}>
+            <form
+              noValidate
+              onSubmit={handleSubmit(onSubmit)}
+              className="space-y-5"
             >
-              {isSubmitting ? "Signing in..." : "Sign in"}
-            </Button>
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field, fieldState }) => (
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      {...field}
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      placeholder="you@example.com"
+                      aria-invalid={Boolean(fieldState.error)}
+                    />
+                    {fieldState.error && (
+                      <p className="text-sm text-destructive" role="alert">
+                        {fieldState.error.message}
+                      </p>
+                    )}
+                  </div>
+                )}
+              />
 
-            {formMessage && (
-              <p className="text-center text-sm text-destructive" role="alert">
-                {formMessage}
-              </p>
-            )}
-          </form>
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field, fieldState }) => (
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      {...field}
+                      id="password"
+                      type="password"
+                      autoComplete="current-password"
+                      placeholder="Enter your password"
+                      aria-invalid={Boolean(fieldState.error)}
+                    />
+                    {fieldState.error && (
+                      <p className="text-sm text-destructive" role="alert">
+                        {fieldState.error.message}
+                      </p>
+                    )}
+                  </div>
+                )}
+              />
+
+              <Button
+                type="submit"
+                className="h-10 w-full"
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "Signing in..." : "Sign in"}
+              </Button>
+
+              {formMessage && (
+                <p className="text-center text-sm text-destructive" role="alert">
+                  {formMessage}
+                </p>
+              )}
+            </form>
+          </Form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Don&apos;t have an account?{" "}

@@ -8,6 +8,7 @@ import {
   useLocation,
 } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 import { ApiError } from "@/lib/api";
 import { getCurrentUser } from "@/services/authService";
 import type { AuthOutletContext, AuthUser } from "@/services/authService";
@@ -154,6 +155,7 @@ function AuthenticationRoutes() {
 function App() {
   return (
     <BrowserRouter>
+      <Toaster position="top-right" />
       <Routes>
         <Route element={<AuthenticationRoutes />}>
           <Route path="/" element={<Navigate to="/login" replace />} />

@@ -7,6 +7,7 @@ import {
   Circle,
   Clock3,
   ListTodo,
+  MoreHorizontal,
   Pencil,
   Plus,
   Search,
@@ -15,10 +16,33 @@ import {
 import { Link, useParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import LogoutButton from "@/components/LogoutButton";
 import { api, ApiError } from "@/lib/api";
+import { toast } from "sonner";
 
 type TaskStatus = "todo" | "in_progress" | "done";
 type TaskPriority = "low" | "medium" | "high";
@@ -109,6 +133,14 @@ function validateTaskTitle(value: string): string | undefined {
   }
 }
 
+function isTaskStatus(value: string | null): value is TaskStatus {
+  return value === "todo" || value === "in_progress" || value === "done";
+}
+
+function isTaskPriority(value: string | null): value is TaskPriority {
+  return value === "low" || value === "medium" || value === "high";
+}
+
 function getTaskFormErrors(error: unknown, fallback: string) {
   const message =
     error instanceof Error && error.message ? error.message : fallback;
@@ -174,6 +206,7 @@ function ProjectDetailsPage() {
   const [taskFormError, setTaskFormError] = useState("");
   const [taskFieldErrors, setTaskFieldErrors] = useState<TaskFieldErrors>({});
   const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
   const [deleteError, setDeleteError] = useState<{
     taskId: number;
     message: string;
@@ -300,6 +333,7 @@ function ProjectDetailsPage() {
         { status: TaskStatus }
       >(`/api/tasks/${task.id}/status`, { status });
       updateTaskInCurrentResults(updatedTask);
+      toast.success("Task status updated.");
     } catch (error: unknown) {
       setStatusUpdateError({
         taskId: task.id,
@@ -378,6 +412,7 @@ function ProjectDetailsPage() {
         );
 
         updateTaskInCurrentResults(task);
+        toast.success("Task updated.");
       } else {
         const requestBody: CreateTaskRequest = {
           title,
@@ -395,6 +430,7 @@ function ProjectDetailsPage() {
         );
 
         updateTaskInCurrentResults(task);
+        toast.success("Task created.");
       }
 
       closeTaskForm();
@@ -414,9 +450,6 @@ function ProjectDetailsPage() {
     if (isTaskActionPending) {
       return;
     }
-    if (!window.confirm(`Delete "${task.title}"?`)) {
-      return;
-    }
 
     setDeleteError(null);
     setDeletingTaskId(task.id);
@@ -434,6 +467,7 @@ function ProjectDetailsPage() {
             }
           : current,
       );
+      toast.success("Task deleted.");
 
       if (editingTaskId === task.id) {
         closeTaskForm();
@@ -448,6 +482,7 @@ function ProjectDetailsPage() {
       });
     } finally {
       setDeletingTaskId(null);
+      setTaskToDelete(null);
     }
   }
 
@@ -569,21 +604,27 @@ function ProjectDetailsPage() {
                   className="pl-9 sm:w-56"
                 />
               </label>
-              <label>
-                <span className="sr-only">Filter tasks by status</span>
-                <select
-                  value={statusFilter}
-                  onChange={(event) =>
-                    setStatusFilter(event.target.value as TaskStatus | "all")
+              <Select
+                value={statusFilter}
+                onValueChange={(value) => {
+                  if (value === "all" || isTaskStatus(value)) {
+                    setStatusFilter(value);
                   }
-                  className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:w-40"
+                }}
+              >
+                <SelectTrigger
+                  aria-label="Filter tasks by status"
+                  className="w-full sm:w-40"
                 >
-                  <option value="all">All statuses</option>
-                  <option value="todo">To do</option>
-                  <option value="in_progress">In progress</option>
-                  <option value="done">Done</option>
-                </select>
-              </label>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="todo">To do</SelectItem>
+                  <SelectItem value="in_progress">In progress</SelectItem>
+                  <SelectItem value="done">Done</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 type="button"
                 disabled={
@@ -677,27 +718,32 @@ function ProjectDetailsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="task-status">Status</Label>
-                  <select
-                    id="task-status"
-                    name="status"
+                  <Select
                     value={taskForm.status}
-                    onChange={(event) =>
-                      updateTaskForm(
-                        "status",
-                        event.target.value as TaskStatus,
-                      )
-                    }
+                    onValueChange={(value) => {
+                      if (isTaskStatus(value)) {
+                        updateTaskForm("status", value);
+                      }
+                    }}
                     disabled={isTaskActionPending}
-                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-                    aria-invalid={Boolean(taskFieldErrors.status)}
-                    aria-describedby={
-                      taskFieldErrors.status ? "task-status-error" : undefined
-                    }
                   >
-                    <option value="todo">To do</option>
-                    <option value="in_progress">In progress</option>
-                    <option value="done">Done</option>
-                  </select>
+                    <SelectTrigger
+                      id="task-status"
+                      aria-label="Task status"
+                      aria-invalid={Boolean(taskFieldErrors.status)}
+                      aria-describedby={
+                        taskFieldErrors.status ? "task-status-error" : undefined
+                      }
+                      className="w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todo">To do</SelectItem>
+                      <SelectItem value="in_progress">In progress</SelectItem>
+                      <SelectItem value="done">Done</SelectItem>
+                    </SelectContent>
+                  </Select>
                   {taskFieldErrors.status && (
                     <p
                       id="task-status-error"
@@ -710,29 +756,34 @@ function ProjectDetailsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="task-priority">Priority</Label>
-                  <select
-                    id="task-priority"
-                    name="priority"
+                  <Select
                     value={taskForm.priority}
-                    onChange={(event) =>
-                      updateTaskForm(
-                        "priority",
-                        event.target.value as TaskPriority,
-                      )
-                    }
+                    onValueChange={(value) => {
+                      if (isTaskPriority(value)) {
+                        updateTaskForm("priority", value);
+                      }
+                    }}
                     disabled={isTaskActionPending}
-                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-                    aria-invalid={Boolean(taskFieldErrors.priority)}
-                    aria-describedby={
-                      taskFieldErrors.priority
-                        ? "task-priority-error"
-                        : undefined
-                    }
                   >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
+                    <SelectTrigger
+                      id="task-priority"
+                      aria-label="Task priority"
+                      aria-invalid={Boolean(taskFieldErrors.priority)}
+                      aria-describedby={
+                        taskFieldErrors.priority
+                          ? "task-priority-error"
+                          : undefined
+                      }
+                      className="w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                    </SelectContent>
+                  </Select>
                   {taskFieldErrors.priority && (
                     <p
                       id="task-priority-error"
@@ -829,9 +880,9 @@ function ProjectDetailsPage() {
           ) : (
             <div className="space-y-3">
               {tasks.map((task) => (
-                <article
+                <Card
                   key={task.id}
-                  className="flex flex-col gap-4 rounded-2xl border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5"
+                  className="flex flex-col gap-4 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5"
                 >
                   <div className="flex min-w-0 items-start gap-3">
                     <span className="mt-0.5 text-muted-foreground">
@@ -878,26 +929,31 @@ function ProjectDetailsPage() {
 
                   <div className="flex shrink-0 flex-col items-start gap-2 pl-8 sm:items-end sm:pl-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <select
+                      <Select
                         value={task.status}
-                        onChange={(event) =>
-                          void updateTaskStatus(
-                            task,
-                            event.target.value as TaskStatus,
-                          )
-                        }
+                        onValueChange={(value) => {
+                          if (isTaskStatus(value)) {
+                            void updateTaskStatus(task, value);
+                          }
+                        }}
                         disabled={
                           isTaskActionPending || editingTaskId !== null
                         }
-                        aria-label={`Status for ${task.title}`}
-                        className="h-9 rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {Object.entries(statusLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          aria-label={`Status for ${task.title}`}
+                          className="w-36"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(statusLabels).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       {updatingTaskId === task.id && (
                         <span
                           className="text-xs text-muted-foreground"
@@ -906,28 +962,41 @@ function ProjectDetailsPage() {
                           Updating...
                         </span>
                       )}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={isTaskActionPending}
-                        onClick={() => openEditForm(task)}
-                        aria-label={`Edit ${task.title}`}
-                      >
-                        <Pencil aria-hidden="true" />
-                        Edit
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="sm"
-                        disabled={isTaskActionPending}
-                        onClick={() => void deleteTask(task)}
-                        aria-label={`Delete ${task.title}`}
-                      >
-                        <Trash2 aria-hidden="true" />
-                        {deletingTaskId === task.id ? "Deleting..." : "Delete"}
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Actions for ${task.title}`}
+                              disabled={isTaskActionPending}
+                            />
+                          }
+                        >
+                          <MoreHorizontal
+                            className="size-4"
+                            aria-hidden="true"
+                          />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            disabled={isTaskActionPending}
+                            onClick={() => openEditForm(task)}
+                          >
+                            <Pencil aria-hidden="true" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            variant="destructive"
+                            disabled={isTaskActionPending}
+                            onClick={() => setTaskToDelete(task)}
+                          >
+                            <Trash2 aria-hidden="true" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                     {deleteError?.taskId === task.id && (
                       <p className="text-sm text-destructive" role="alert">
@@ -940,12 +1009,52 @@ function ProjectDetailsPage() {
                       </p>
                     )}
                   </div>
-                </article>
+                </Card>
               ))}
             </div>
           )}
         </section>
       </main>
+      <Dialog
+        open={taskToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && deletingTaskId === null) {
+            setTaskToDelete(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete task?</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &quot;{taskToDelete?.title}&quot;?
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deletingTaskId !== null}
+              onClick={() => setTaskToDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingTaskId !== null || taskToDelete === null}
+              onClick={() => {
+                if (taskToDelete) {
+                  void deleteTask(taskToDelete);
+                }
+              }}
+            >
+              {deletingTaskId !== null ? "Deleting..." : "Delete task"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -960,7 +1069,7 @@ function SummaryCard({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border bg-card p-4">
+    <Card className="flex items-center gap-3 p-4">
       <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
         {icon}
       </span>
@@ -968,7 +1077,7 @@ function SummaryCard({
         <p className="text-xs text-muted-foreground">{label}</p>
         <p className="mt-0.5 text-lg font-semibold">{value}</p>
       </div>
-    </div>
+    </Card>
   );
 }
 
