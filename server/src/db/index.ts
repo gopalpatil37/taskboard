@@ -1,3 +1,5 @@
+// Creates the PostgreSQL connection pool and Drizzle database client.
+
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { env } from "../env";

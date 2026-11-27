@@ -1,3 +1,4 @@
+// Implements authenticated project listing and project CRUD endpoints.
 import { and, count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";

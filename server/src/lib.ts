@@ -1,3 +1,4 @@
+// Provides shared API response, origin-check, and authentication-cookie helpers.
 import { deleteCookie, setCookie } from "hono/cookie";
 import type { Context } from "hono";
 import { sign } from "hono/jwt";

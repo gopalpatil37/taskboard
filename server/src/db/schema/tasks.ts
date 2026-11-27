@@ -1,3 +1,4 @@
+// Defines task enums and the PostgreSQL tasks table.
 import {
   date,
   integer,

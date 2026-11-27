@@ -1,4 +1,5 @@
 
+// Applies the initial SQL migration to the configured PostgreSQL database.
 import { Pool } from "pg";
 import "dotenv/config";
 import { readFile } from "node:fs/promises";

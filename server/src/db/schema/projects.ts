@@ -1,3 +1,4 @@
+// Defines the PostgreSQL projects table and its user ownership relation.
 import { integer, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 

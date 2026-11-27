@@ -1,3 +1,4 @@
+// Configures the Hono API, mounts routes, and starts the HTTP server.
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';

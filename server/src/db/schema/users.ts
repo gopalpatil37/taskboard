@@ -1,3 +1,4 @@
+// Defines the PostgreSQL users table and unique email constraint.
 import { pgTable, serial, text, timestamp, unique, varchar } from "drizzle-orm/pg-core";
 
 export const users = pgTable(

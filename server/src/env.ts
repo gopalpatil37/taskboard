@@ -1,3 +1,4 @@
+// Loads and validates the server's environment configuration.
 import "dotenv/config";
 import { z } from "zod";
 

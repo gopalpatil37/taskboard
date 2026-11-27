@@ -1,3 +1,4 @@
+// Verifies the auth cookie and adds the authenticated user ID to the request.
 import { getCookie } from "hono/cookie";
 import type { MiddlewareHandler } from "hono";
 import { verify } from "hono/jwt";

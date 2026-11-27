@@ -1,3 +1,4 @@
+// Implements signup, login, logout, and current-user endpoints.
 import bcrypt from "bcrypt";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";

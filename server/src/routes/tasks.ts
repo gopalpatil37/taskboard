@@ -1,3 +1,4 @@
+// Implements authenticated task CRUD, filtering, and status-update endpoints.
 import { and, eq, ilike, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
