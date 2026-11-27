@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
+import ProjectDetailsPage from "./pages/ProjectDetailsPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import SignupPage from "./pages/SignupPage";
 
@@ -13,10 +14,7 @@ function App() {
 
         <Route path="/projects" element={<ProjectsPage />} />
 
-        <Route
-          path="/projects/:projectId"
-          element={<h1>Project Details</h1>}
-        />
+        <Route path="/projects/:projectId" element={<ProjectDetailsPage />} />
       </Routes>
     </BrowserRouter>
   );

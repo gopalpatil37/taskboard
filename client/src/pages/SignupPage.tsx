@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { signup } from "@/services/authService";
 
 const signupSchema = z.object({
   name: z
@@ -21,10 +22,11 @@ type SignupFormValues = z.infer<typeof signupSchema>;
 
 export default function SignupPage() {
   const [formMessage, setFormMessage] = useState("");
+  const navigate = useNavigate();
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isSubmitting },
   } = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
     defaultValues: {
@@ -34,8 +36,19 @@ export default function SignupPage() {
     },
   });
 
-  function onSubmit() {
-    setFormMessage("Form is valid. Signup will be connected to the API next.");
+  async function onSubmit(values: SignupFormValues) {
+    setFormMessage("");
+
+    try {
+      await signup(values.name, values.email, values.password);
+      navigate("/projects", { replace: true });
+    } catch (error) {
+      setFormMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to create your account. Please try again.",
+      );
+    }
   }
 
   return (
@@ -110,12 +123,16 @@ export default function SignupPage() {
               )}
             </div>
 
-            <Button type="submit" className="h-10 w-full">
-              Create account
+            <Button
+              type="submit"
+              className="h-10 w-full"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? "Creating account..." : "Create account"}
             </Button>
 
             {formMessage && (
-              <p className="text-center text-sm text-muted-foreground" role="status">
+              <p className="text-center text-sm text-destructive" role="alert">
                 {formMessage}
               </p>
             )}
