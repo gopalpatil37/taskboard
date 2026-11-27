@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { AuthOutletContext } from "@/services/authService";
 import { signup } from "@/services/authService";
 
 const signupSchema = z.object({
@@ -23,6 +24,7 @@ type SignupFormValues = z.infer<typeof signupSchema>;
 export default function SignupPage() {
   const [formMessage, setFormMessage] = useState("");
   const navigate = useNavigate();
+  const { setAuthenticatedUser } = useOutletContext<AuthOutletContext>();
   const {
     register,
     handleSubmit,
@@ -40,7 +42,8 @@ export default function SignupPage() {
     setFormMessage("");
 
     try {
-      await signup(values.name, values.email, values.password);
+      const { user } = await signup(values.name, values.email, values.password);
+      setAuthenticatedUser(user);
       navigate("/projects", { replace: true });
     } catch (error) {
       setFormMessage(

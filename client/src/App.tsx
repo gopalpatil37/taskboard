@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import { getCurrentUser } from "@/services/authService";
+import type { AuthOutletContext, AuthUser } from "@/services/authService";
 import LoginPage from "./pages/LoginPage";
 import ProjectDetailsPage from "./pages/ProjectDetailsPage";
 import ProjectsPage from "./pages/ProjectsPage";
@@ -17,12 +18,12 @@ import SignupPage from "./pages/SignupPage";
 
 type SessionStatus = "checking" | "authenticated" | "unauthenticated" | "error";
 
-let sessionCheckPromise: Promise<void> | null = null;
+let sessionCheckPromise: Promise<AuthUser> | null = null;
 
-function checkSession(): Promise<void> {
+function checkSession(): Promise<AuthUser> {
   if (!sessionCheckPromise) {
     sessionCheckPromise = getCurrentUser()
-      .then(() => undefined)
+      .then(({ user }) => user)
       .finally(() => {
         sessionCheckPromise = null;
       });
@@ -33,6 +34,7 @@ function checkSession(): Promise<void> {
 
 function AuthenticationRoutes() {
   const [status, setStatus] = useState<SessionStatus>("checking");
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [retryCount, setRetryCount] = useState(0);
   const { pathname } = useLocation();
@@ -41,6 +43,13 @@ function AuthenticationRoutes() {
   const isGuestRoute = pathname === "/login" || pathname === "/signup";
   const skipNextCheck = useRef(false);
   const hasCheckedInitialRoute = useRef(false);
+
+  function setAuthenticatedUser(authenticatedUser: AuthUser) {
+    setUser(authenticatedUser);
+    setErrorMessage("");
+    setStatus("authenticated");
+    skipNextCheck.current = true;
+  }
 
   useEffect(() => {
     if (hasCheckedInitialRoute.current && skipNextCheck.current) {
@@ -53,8 +62,9 @@ function AuthenticationRoutes() {
 
     setStatus("checking");
     checkSession()
-      .then(() => {
+      .then((currentUser) => {
         if (active) {
+          setUser(currentUser);
           if (!isProtectedRoute) {
             skipNextCheck.current = true;
           }
@@ -70,6 +80,7 @@ function AuthenticationRoutes() {
           error instanceof ApiError &&
           (error.status === 401 || error.status === 404)
         ) {
+          setUser(null);
           if (isProtectedRoute) {
             skipNextCheck.current = true;
           }
@@ -132,7 +143,12 @@ function AuthenticationRoutes() {
     );
   }
 
-  return <Outlet />;
+  const outletContext: AuthOutletContext = {
+    user,
+    setAuthenticatedUser,
+  };
+
+  return <Outlet context={outletContext} />;
 }
 
 function App() {

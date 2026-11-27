@@ -9,13 +9,14 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import LogoutButton from "@/components/LogoutButton";
 import { api } from "@/lib/api";
+import type { AuthOutletContext } from "@/services/authService";
 
 type Project = {
   id: number;
@@ -65,6 +66,15 @@ function getProjects(): Promise<ProjectsResponse> {
 }
 
 function ProjectsPage() {
+  const { user } = useOutletContext<AuthOutletContext>();
+  const userName = user?.name ?? "";
+  const userNameParts = userName.trim().split(/\s+/).filter(Boolean);
+  const firstName = userNameParts[0] ?? "there";
+  const userInitials =
+    userNameParts
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join("") || "?";
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -276,13 +286,13 @@ function ProjectsPage() {
 
           <div className="flex items-center gap-3">
             <span className="hidden text-sm font-medium sm:inline">
-              Jordan Lee
+              {userName}
             </span>
             <span
               className="flex size-9 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary"
-              aria-label="Jordan Lee"
+              aria-label={`${userName} avatar`}
             >
-              JL
+              {userInitials}
             </span>
             <LogoutButton />
           </div>
@@ -296,10 +306,10 @@ function ProjectsPage() {
               YOUR WORKSPACE
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-              Good morning, Jordan
+              Welcome, {firstName} 👋
             </h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-              Keep your projects moving. Here&apos;s what your team is working on.
+              Keep your projects moving. Here&apos;s what you&apos;re working on.
             </p>
           </div>
 

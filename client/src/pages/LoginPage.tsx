@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { AuthOutletContext } from "@/services/authService";
 import { login } from "@/services/authService";
 
 const loginSchema = z.object({
@@ -18,6 +19,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 export default function LoginPage() {
   const [formMessage, setFormMessage] = useState("");
   const navigate = useNavigate();
+  const { setAuthenticatedUser } = useOutletContext<AuthOutletContext>();
   const {
     register,
     handleSubmit,
@@ -34,7 +36,8 @@ export default function LoginPage() {
     setFormMessage("");
 
     try {
-      await login(values.email, values.password);
+      const { user } = await login(values.email, values.password);
+      setAuthenticatedUser(user);
       navigate("/projects", { replace: true });
     } catch (error) {
       setFormMessage(
