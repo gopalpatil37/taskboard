@@ -1,0 +1,1093 @@
+// Displays and manages tasks, filters, and progress for one project.
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  ArrowLeft,
+  CalendarDays,
+  CheckCircle2,
+  Circle,
+  Clock3,
+  ListTodo,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
+import { Link, useParams } from "react-router-dom";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import LogoutButton from "@/components/LogoutButton";
+import { api, ApiError } from "@/lib/api";
+import { toast } from "sonner";
+
+type TaskStatus = "todo" | "in_progress" | "done";
+type TaskPriority = "low" | "medium" | "high";
+
+type Task = {
+  id: number;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate: string | null;
+};
+
+type TasksResponse = {
+  tasks: Task[];
+};
+
+// Share in-flight reads so React StrictMode does not request the same project twice.
+const projectTasksRequests = new Map<string, Promise<TasksResponse>>();
+
+function getProjectTasks(
+  projectId: string,
+  status: TaskStatus | "all",
+  search: string,
+): Promise<TasksResponse> {
+  const query = new URLSearchParams();
+  if (status !== "all") {
+    query.set("status", status);
+  }
+  if (search) {
+    query.set("search", search);
+  }
+
+  const queryString = query.toString();
+  const requestKey = `${projectId}?${queryString}`;
+  const path = `/api/projects/${encodeURIComponent(projectId)}/tasks${
+    queryString ? `?${queryString}` : ""
+  }`;
+  const existingRequest = projectTasksRequests.get(requestKey);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = api
+    .get<TasksResponse>(path)
+    .finally(() => {
+      projectTasksRequests.delete(requestKey);
+    });
+
+  projectTasksRequests.set(requestKey, request);
+  return request;
+}
+
+type CreateTaskRequest = {
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate?: string;
+};
+
+type EditTaskRequest = {
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate: string | null;
+};
+
+type CreateTaskFormValues = {
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate: string;
+};
+
+type TaskFormField = keyof CreateTaskFormValues;
+type TaskFieldErrors = Partial<Record<TaskFormField, string>>;
+
+function validateTaskTitle(value: string): string | undefined {
+  const title = value.trim();
+  if (!title) {
+    return "Task title is required.";
+  }
+  if (title.length > 200) {
+    return "Task title must be 200 characters or fewer.";
+  }
+}
+
+function isTaskStatus(value: string | null): value is TaskStatus {
+  return value === "todo" || value === "in_progress" || value === "done";
+}
+
+function isTaskPriority(value: string | null): value is TaskPriority {
+  return value === "low" || value === "medium" || value === "high";
+}
+
+function getTaskFormErrors(error: unknown, fallback: string) {
+  const message =
+    error instanceof Error && error.message ? error.message : fallback;
+  const fieldErrors: TaskFieldErrors = {};
+  const formMessages: string[] = [];
+
+  if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
+    for (const issue of message.split(";")) {
+      const match =
+        /^(title|description|status|priority|dueDate):\s*(.+)$/.exec(
+          issue.trim(),
+        );
+      if (match) {
+        fieldErrors[match[1] as TaskFormField] = match[2];
+      } else {
+        formMessages.push(issue.trim());
+      }
+    }
+  } else {
+    formMessages.push(message);
+  }
+
+  return { fieldErrors, formError: formMessages.join("; ") };
+}
+
+const initialTaskForm: CreateTaskFormValues = {
+  title: "",
+  description: "",
+  status: "todo",
+  priority: "medium",
+  dueDate: "",
+};
+
+const statusLabels: Record<TaskStatus, string> = {
+  todo: "To do",
+  in_progress: "In progress",
+  done: "Done",
+};
+
+const priorityVariants: Record<TaskPriority, "secondary" | "default" | "destructive"> = {
+  low: "secondary",
+  medium: "default",
+  high: "destructive",
+};
+
+function ProjectDetailsPage() {
+  const { projectId } = useParams();
+  const [taskResult, setTaskResult] = useState<{
+    projectId: string;
+    statusFilter: TaskStatus | "all";
+    search: string;
+    tasks: Task[];
+    errorMessage?: string;
+  } | null>(null);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [taskForm, setTaskForm] =
+    useState<CreateTaskFormValues>(initialTaskForm);
+  const [isSavingTask, setIsSavingTask] = useState(false);
+  const [taskFormError, setTaskFormError] = useState("");
+  const [taskFieldErrors, setTaskFieldErrors] = useState<TaskFieldErrors>({});
+  const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const [deleteError, setDeleteError] = useState<{
+    taskId: number;
+    message: string;
+  } | null>(null);
+  const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
+  const [statusUpdateError, setStatusUpdateError] = useState<{
+    taskId: number;
+    message: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
+    if (!projectId) {
+      return;
+    }
+
+    let active = true;
+
+    getProjectTasks(projectId, statusFilter, debouncedSearch)
+      .then(({ tasks: projectTasks }) => {
+        if (active) {
+          setTaskResult({
+            projectId,
+            statusFilter,
+            search: debouncedSearch,
+            tasks: projectTasks,
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setTaskResult({
+            projectId,
+            statusFilter,
+            search: debouncedSearch,
+            tasks: [],
+            errorMessage:
+              error instanceof Error
+                ? error.message
+                : "Unable to load tasks for this project. Please try again.",
+          });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [projectId, statusFilter, debouncedSearch]);
+
+  const currentTaskResult =
+    taskResult &&
+    taskResult.projectId === projectId &&
+    taskResult.statusFilter === statusFilter &&
+    taskResult.search === debouncedSearch
+      ? taskResult
+      : null;
+  const tasks = currentTaskResult?.tasks ?? [];
+  const displayErrorMessage = projectId
+    ? currentTaskResult?.errorMessage ?? ""
+    : "Project ID is missing from the route.";
+  const isLoading = Boolean(projectId) && !currentTaskResult;
+  const completedTasks = tasks.filter((task) => task.status === "done").length;
+  const inProgressTasks = tasks.filter(
+    (task) => task.status === "in_progress",
+  ).length;
+  const progress =
+    tasks.length === 0 ? 0 : Math.round((completedTasks / tasks.length) * 100);
+  const projectTitle = projectId ? `Project ${projectId}` : "Project";
+  const hasActiveFilters = statusFilter !== "all" || Boolean(debouncedSearch);
+  const isTaskActionPending =
+    isSavingTask || deletingTaskId !== null || updatingTaskId !== null;
+
+  function updateTaskInCurrentResults(task: Task) {
+    setTaskResult((current) => {
+      if (
+        !current ||
+        current.projectId !== projectId ||
+        current.statusFilter !== statusFilter ||
+        current.search !== debouncedSearch
+      ) {
+        return current;
+      }
+
+      const remainingTasks = current.tasks.filter(
+        (currentTask) => currentTask.id !== task.id,
+      );
+      const matchesStatus =
+        statusFilter === "all" || task.status === statusFilter;
+      const matchesSearch =
+        !debouncedSearch ||
+        task.title.toLowerCase().includes(debouncedSearch.toLowerCase());
+
+      return {
+        ...current,
+        tasks:
+          matchesStatus && matchesSearch
+            ? [task, ...remainingTasks]
+            : remainingTasks,
+      };
+    });
+  }
+
+  async function updateTaskStatus(task: Task, status: TaskStatus) {
+    if (
+      isTaskActionPending ||
+      editingTaskId !== null ||
+      task.status === status
+    ) {
+      return;
+    }
+
+    setStatusUpdateError(null);
+    setUpdatingTaskId(task.id);
+
+    try {
+      const { task: updatedTask } = await api.patch<
+        { task: Task },
+        { status: TaskStatus }
+      >(`/api/tasks/${task.id}/status`, { status });
+      updateTaskInCurrentResults(updatedTask);
+      toast.success("Task status updated.");
+    } catch (error: unknown) {
+      setStatusUpdateError({
+        taskId: task.id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to update task status. Please try again.",
+      });
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  }
+
+  function updateTaskForm<Field extends keyof CreateTaskFormValues>(
+    field: Field,
+    value: CreateTaskFormValues[Field],
+  ) {
+    setTaskForm((current) => ({ ...current, [field]: value }));
+    setTaskFieldErrors((current) => ({
+      ...current,
+      [field]:
+        field === "title" ? validateTaskTitle(String(value)) : undefined,
+    }));
+  }
+
+  function closeTaskForm() {
+    setShowCreateForm(false);
+    setEditingTaskId(null);
+    setTaskForm(initialTaskForm);
+    setTaskFormError("");
+    setTaskFieldErrors({});
+  }
+
+  function openEditForm(task: Task) {
+    setTaskForm({
+      title: task.title,
+      description: task.description ?? "",
+      status: task.status,
+      priority: task.priority,
+      dueDate: task.dueDate ?? "",
+    });
+    setEditingTaskId(task.id);
+    setTaskFormError("");
+    setTaskFieldErrors({});
+    setShowCreateForm(true);
+  }
+
+  async function saveTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isTaskActionPending || !projectId) {
+      return;
+    }
+
+    setTaskFormError("");
+    setTaskFieldErrors({});
+    const title = taskForm.title.trim();
+    const titleError = validateTaskTitle(title);
+    if (titleError) {
+      setTaskFieldErrors({ title: titleError });
+      return;
+    }
+
+    setIsSavingTask(true);
+
+    try {
+      if (editingTaskId !== null) {
+        const { task } = await api.patch<{ task: Task }, EditTaskRequest>(
+          `/api/tasks/${editingTaskId}`,
+          {
+            title,
+            description: taskForm.description || null,
+            status: taskForm.status,
+            priority: taskForm.priority,
+            dueDate: taskForm.dueDate || null,
+          },
+        );
+
+        updateTaskInCurrentResults(task);
+        toast.success("Task updated.");
+      } else {
+        const requestBody: CreateTaskRequest = {
+          title,
+          description: taskForm.description || undefined,
+          status: taskForm.status,
+          priority: taskForm.priority,
+          dueDate: taskForm.dueDate || undefined,
+        };
+        const { task } = await api.post<
+          { task: Task },
+          CreateTaskRequest
+        >(
+          `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+          requestBody,
+        );
+
+        updateTaskInCurrentResults(task);
+        toast.success("Task created.");
+      }
+
+      closeTaskForm();
+    } catch (error: unknown) {
+      const errors = getTaskFormErrors(
+        error,
+        "Unable to save the task. Please try again.",
+      );
+      setTaskFieldErrors(errors.fieldErrors);
+      setTaskFormError(errors.formError);
+    } finally {
+      setIsSavingTask(false);
+    }
+  }
+
+  async function deleteTask(task: Task) {
+    if (isTaskActionPending) {
+      return;
+    }
+
+    setDeleteError(null);
+    setDeletingTaskId(task.id);
+
+    try {
+      await api.delete<{ message: string }>(`/api/tasks/${task.id}`);
+      setTaskResult((current) =>
+        current &&
+        current.projectId === projectId &&
+        current.statusFilter === statusFilter &&
+        current.search === debouncedSearch
+          ? {
+              ...current,
+              tasks: current.tasks.filter((item) => item.id !== task.id),
+            }
+          : current,
+      );
+      toast.success("Task deleted.");
+
+      if (editingTaskId === task.id) {
+        closeTaskForm();
+      }
+    } catch (error: unknown) {
+      setDeleteError({
+        taskId: task.id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to delete the task. Please try again.",
+      });
+    } finally {
+      setDeletingTaskId(null);
+      setTaskToDelete(null);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-muted/30">
+      <header className="border-b bg-background">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
+          <Link to="/projects" className="text-lg font-semibold tracking-tight">
+            TaskBoard
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              to="/projects"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              All projects
+            </Link>
+            <LogoutButton />
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        <Link
+          to="/projects"
+          className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" aria-hidden="true" />
+          Back to projects
+        </Link>
+
+        <section className="mt-6 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-muted-foreground">
+              PROJECT
+            </p>
+            <h1 className="mt-2 break-words text-3xl font-semibold tracking-tight sm:text-4xl">
+              {projectTitle}
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
+              Tasks and progress for this project.
+            </p>
+          </div>
+        </section>
+
+        {!isLoading && !displayErrorMessage && (
+          <>
+            <section
+              className="mt-8 grid gap-3 sm:grid-cols-3 sm:gap-4"
+              aria-label="Project task summary"
+            >
+              <SummaryCard
+                label={hasActiveFilters ? "Matching tasks" : "Total tasks"}
+                value={tasks.length}
+                icon={<ListTodo className="size-4" aria-hidden="true" />}
+              />
+              <SummaryCard
+                label="In progress"
+                value={inProgressTasks}
+                icon={<Clock3 className="size-4" aria-hidden="true" />}
+              />
+              <SummaryCard
+                label="Completed"
+                value={completedTasks}
+                icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
+              />
+            </section>
+
+            <section className="mt-8 rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="font-semibold">
+                    {hasActiveFilters ? "Filtered task progress" : "Project progress"}
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {completedTasks} of {tasks.length}{" "}
+                    {hasActiveFilters ? "matching tasks" : "tasks"} completed
+                  </p>
+                </div>
+                <span className="text-lg font-semibold">{progress}%</span>
+              </div>
+              <div
+                className="mt-4 h-2 overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+                aria-label={`${projectTitle} completion`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progress}
+              >
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </section>
+          </>
+        )}
+
+        <section className="mt-10">
+          <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">Tasks</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Organize and track work for this project.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <label className="relative block">
+                <span className="sr-only">Search tasks</span>
+                <Search
+                  className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search tasks"
+                  maxLength={200}
+                  className="pl-9 sm:w-56"
+                />
+              </label>
+              <Select
+                value={statusFilter}
+                onValueChange={(value) => {
+                  if (value === "all" || isTaskStatus(value)) {
+                    setStatusFilter(value);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  aria-label="Filter tasks by status"
+                  className="w-full sm:w-40"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="todo">To do</SelectItem>
+                  <SelectItem value="in_progress">In progress</SelectItem>
+                  <SelectItem value="done">Done</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                disabled={
+                  !projectId ||
+                  isLoading ||
+                  Boolean(displayErrorMessage) ||
+                  isTaskActionPending
+                }
+                onClick={() => {
+                  if (showCreateForm) {
+                    closeTaskForm();
+                    return;
+                  }
+                  setEditingTaskId(null);
+                  setTaskForm(initialTaskForm);
+                  setTaskFormError("");
+                  setTaskFieldErrors({});
+                  setShowCreateForm(true);
+                }}
+              >
+                <Plus className="size-4" aria-hidden="true" />
+                {showCreateForm ? "Cancel" : "Create task"}
+              </Button>
+            </div>
+          </div>
+
+          {showCreateForm && (
+            <form
+              onSubmit={saveTask}
+              className="mb-5 rounded-2xl border bg-card p-5 shadow-sm sm:p-6"
+            >
+              <h3 className="font-semibold">
+                {editingTaskId === null ? "Create a task" : "Edit task"}
+              </h3>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="task-title">Title</Label>
+                  <Input
+                    id="task-title"
+                    name="title"
+                    value={taskForm.title}
+                    onChange={(event) =>
+                      updateTaskForm("title", event.target.value)
+                    }
+                    placeholder="What needs to be done?"
+                    disabled={isTaskActionPending}
+                    aria-invalid={Boolean(taskFieldErrors.title)}
+                    aria-describedby={
+                      taskFieldErrors.title ? "task-title-error" : undefined
+                    }
+                  />
+                  {taskFieldErrors.title && (
+                    <p
+                      id="task-title-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.title}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="task-description">
+                    Description <span className="text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    id="task-description"
+                    name="description"
+                    value={taskForm.description}
+                    onChange={(event) =>
+                      updateTaskForm("description", event.target.value)
+                    }
+                    placeholder="Add a few details"
+                    disabled={isTaskActionPending}
+                    aria-invalid={Boolean(taskFieldErrors.description)}
+                    aria-describedby={
+                      taskFieldErrors.description
+                        ? "task-description-error"
+                        : undefined
+                    }
+                  />
+                  {taskFieldErrors.description && (
+                    <p
+                      id="task-description-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.description}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="task-status">Status</Label>
+                  <Select
+                    value={taskForm.status}
+                    onValueChange={(value) => {
+                      if (isTaskStatus(value)) {
+                        updateTaskForm("status", value);
+                      }
+                    }}
+                    disabled={isTaskActionPending}
+                  >
+                    <SelectTrigger
+                      id="task-status"
+                      aria-label="Task status"
+                      aria-invalid={Boolean(taskFieldErrors.status)}
+                      aria-describedby={
+                        taskFieldErrors.status ? "task-status-error" : undefined
+                      }
+                      className="w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todo">To do</SelectItem>
+                      <SelectItem value="in_progress">In progress</SelectItem>
+                      <SelectItem value="done">Done</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {taskFieldErrors.status && (
+                    <p
+                      id="task-status-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.status}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="task-priority">Priority</Label>
+                  <Select
+                    value={taskForm.priority}
+                    onValueChange={(value) => {
+                      if (isTaskPriority(value)) {
+                        updateTaskForm("priority", value);
+                      }
+                    }}
+                    disabled={isTaskActionPending}
+                  >
+                    <SelectTrigger
+                      id="task-priority"
+                      aria-label="Task priority"
+                      aria-invalid={Boolean(taskFieldErrors.priority)}
+                      aria-describedby={
+                        taskFieldErrors.priority
+                          ? "task-priority-error"
+                          : undefined
+                      }
+                      className="w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {taskFieldErrors.priority && (
+                    <p
+                      id="task-priority-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.priority}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="task-due-date">
+                    Due date <span className="text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    id="task-due-date"
+                    name="dueDate"
+                    type="date"
+                    value={taskForm.dueDate}
+                    onChange={(event) =>
+                      updateTaskForm("dueDate", event.target.value)
+                    }
+                    disabled={isTaskActionPending}
+                    aria-invalid={Boolean(taskFieldErrors.dueDate)}
+                    aria-describedby={
+                      taskFieldErrors.dueDate ? "task-due-date-error" : undefined
+                    }
+                  />
+                  {taskFieldErrors.dueDate && (
+                    <p
+                      id="task-due-date-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.dueDate}
+                    </p>
+                  )}
+                </div>
+              </div>
+              {taskFormError && (
+                <p
+                  className="mt-4 text-sm text-destructive"
+                  role="alert"
+                >
+                  {taskFormError}
+                </p>
+              )}
+              <div className="mt-5 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isTaskActionPending}
+                  onClick={closeTaskForm}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isTaskActionPending}>
+                  {isSavingTask
+                    ? "Saving..."
+                    : editingTaskId === null
+                      ? "Create task"
+                      : "Save changes"}
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {isLoading ? (
+            <p className="rounded-2xl border bg-background px-5 py-14 text-center text-sm text-muted-foreground" role="status">
+              Loading tasks...
+            </p>
+          ) : displayErrorMessage ? (
+            <p
+              className="rounded-2xl border border-destructive/30 bg-destructive/5 px-5 py-6 text-sm text-destructive"
+              role="alert"
+            >
+              {displayErrorMessage}
+            </p>
+          ) : tasks.length === 0 ? (
+            <div className="rounded-2xl border border-dashed bg-background px-5 py-14 text-center">
+              <Circle
+                className="mx-auto size-9 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <h3 className="mt-4 font-semibold">
+                {hasActiveFilters ? "No matching tasks" : "No tasks yet"}
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {hasActiveFilters
+                  ? "Try changing the search or status filter."
+                  : "There are no tasks in this project yet."}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {tasks.map((task) => (
+                <Card
+                  key={task.id}
+                  className="flex flex-col gap-4 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="mt-0.5 text-muted-foreground">
+                      {task.status === "done" ? (
+                        <CheckCircle2
+                          className="size-5 text-primary"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Circle className="size-5" aria-hidden="true" />
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <h3
+                        className={`break-words font-medium ${
+                          task.status === "done"
+                            ? "text-muted-foreground line-through"
+                            : ""
+                        }`}
+                      >
+                        {task.title}
+                      </h3>
+                      {task.description && (
+                        <p className="mt-1 break-words text-sm text-muted-foreground">
+                          {task.description}
+                        </p>
+                      )}
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Badge variant={priorityVariants[task.priority]}>
+                          {task.priority} priority
+                        </Badge>
+                        {task.dueDate && (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <CalendarDays
+                              className="size-3.5"
+                              aria-hidden="true"
+                            />
+                            {formatDueDate(task.dueDate)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex shrink-0 flex-col items-start gap-2 pl-8 sm:items-end sm:pl-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select
+                        value={task.status}
+                        onValueChange={(value) => {
+                          if (isTaskStatus(value)) {
+                            void updateTaskStatus(task, value);
+                          }
+                        }}
+                        disabled={
+                          isTaskActionPending || editingTaskId !== null
+                        }
+                      >
+                        <SelectTrigger
+                          aria-label={`Status for ${task.title}`}
+                          className="w-36"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(statusLabels).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {updatingTaskId === task.id && (
+                        <span
+                          className="text-xs text-muted-foreground"
+                          role="status"
+                        >
+                          Updating...
+                        </span>
+                      )}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Actions for ${task.title}`}
+                              disabled={isTaskActionPending}
+                            />
+                          }
+                        >
+                          <MoreHorizontal
+                            className="size-4"
+                            aria-hidden="true"
+                          />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            disabled={isTaskActionPending}
+                            onClick={() => openEditForm(task)}
+                          >
+                            <Pencil aria-hidden="true" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            variant="destructive"
+                            disabled={isTaskActionPending}
+                            onClick={() => setTaskToDelete(task)}
+                          >
+                            <Trash2 aria-hidden="true" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                    {deleteError?.taskId === task.id && (
+                      <p className="text-sm text-destructive" role="alert">
+                        {deleteError.message}
+                      </p>
+                    )}
+                    {statusUpdateError?.taskId === task.id && (
+                      <p className="text-sm text-destructive" role="alert">
+                        {statusUpdateError.message}
+                      </p>
+                    )}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </section>
+      </main>
+      <Dialog
+        open={taskToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && deletingTaskId === null) {
+            setTaskToDelete(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete task?</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &quot;{taskToDelete?.title}&quot;?
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deletingTaskId !== null}
+              onClick={() => setTaskToDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingTaskId !== null || taskToDelete === null}
+              onClick={() => {
+                if (taskToDelete) {
+                  void deleteTask(taskToDelete);
+                }
+              }}
+            >
+              {deletingTaskId !== null ? "Deleting..." : "Delete task"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+}) {
+  return (
+    <Card className="flex items-center gap-3 p-4">
+      <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        {icon}
+      </span>
+      <div>
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="mt-0.5 text-lg font-semibold">{value}</p>
+      </div>
+    </Card>
+  );
+}
+
+function formatDueDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
+export default ProjectDetailsPage;
