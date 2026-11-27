@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { login } from "@/services/authService";
 
 const loginSchema = z.object({
   email: z.string().trim().email("Enter a valid email address."),
@@ -16,10 +17,11 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const [formMessage, setFormMessage] = useState("");
+  const navigate = useNavigate();
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isSubmitting },
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
@@ -28,8 +30,19 @@ export default function LoginPage() {
     },
   });
 
-  function onSubmit() {
-    setFormMessage("Form is valid. Login will be connected to the API next.");
+  async function onSubmit(values: LoginFormValues) {
+    setFormMessage("");
+
+    try {
+      await login(values.email, values.password);
+      navigate("/projects", { replace: true });
+    } catch (error) {
+      setFormMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to sign in. Please try again.",
+      );
+    }
   }
 
   return (
@@ -85,12 +98,16 @@ export default function LoginPage() {
               )}
             </div>
 
-            <Button type="submit" className="h-10 w-full">
-              Sign in
+            <Button
+              type="submit"
+              className="h-10 w-full"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? "Signing in..." : "Sign in"}
             </Button>
 
             {formMessage && (
-              <p className="text-center text-sm text-muted-foreground" role="status">
+              <p className="text-center text-sm text-destructive" role="alert">
                 {formMessage}
               </p>
             )}
