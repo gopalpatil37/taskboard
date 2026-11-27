@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -6,11 +6,14 @@ import {
   Circle,
   Clock3,
   ListTodo,
+  Plus,
   Search,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import LogoutButton from "@/components/LogoutButton";
 import { api } from "@/lib/api";
 
@@ -28,6 +31,51 @@ type Task = {
 
 type TasksResponse = {
   tasks: Task[];
+};
+
+// Share in-flight reads so React StrictMode does not request the same project twice.
+const projectTasksRequests = new Map<string, Promise<TasksResponse>>();
+
+function getProjectTasks(projectId: string): Promise<TasksResponse> {
+  const existingRequest = projectTasksRequests.get(projectId);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = api
+    .get<TasksResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+    )
+    .finally(() => {
+      projectTasksRequests.delete(projectId);
+    });
+
+  projectTasksRequests.set(projectId, request);
+  return request;
+}
+
+type CreateTaskRequest = {
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate?: string;
+};
+
+type CreateTaskFormValues = {
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate: string;
+};
+
+const initialTaskForm: CreateTaskFormValues = {
+  title: "",
+  description: "",
+  status: "todo",
+  priority: "medium",
+  dueDate: "",
 };
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -51,6 +99,11 @@ function ProjectDetailsPage() {
   } | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [taskForm, setTaskForm] =
+    useState<CreateTaskFormValues>(initialTaskForm);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
 
   useEffect(() => {
     if (!projectId) {
@@ -59,10 +112,7 @@ function ProjectDetailsPage() {
 
     let active = true;
 
-    api
-      .get<TasksResponse>(
-        `/api/projects/${encodeURIComponent(projectId)}/tasks`,
-      )
+    getProjectTasks(projectId)
       .then(({ tasks: projectTasks }) => {
         if (active) {
           setTaskResult({ projectId, tasks: projectTasks });
@@ -108,6 +158,68 @@ function ProjectDetailsPage() {
       statusFilter === "all" || task.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+
+  function updateTaskForm<Field extends keyof CreateTaskFormValues>(
+    field: Field,
+    value: CreateTaskFormValues[Field],
+  ) {
+    setTaskForm((current) => ({ ...current, [field]: value }));
+    setCreateError("");
+  }
+
+  async function createTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isCreating || !projectId) {
+      return;
+    }
+
+    const title = taskForm.title.trim();
+    if (!title) {
+      setCreateError("Task title is required.");
+      return;
+    }
+    if (title.length > 200) {
+      setCreateError("Task title must be 200 characters or fewer.");
+      return;
+    }
+
+    setCreateError("");
+    setIsCreating(true);
+
+    const requestBody: CreateTaskRequest = {
+      title,
+      description: taskForm.description || undefined,
+      status: taskForm.status,
+      priority: taskForm.priority,
+      dueDate: taskForm.dueDate || undefined,
+    };
+
+    try {
+      const { task } = await api.post<
+        { task: Task },
+        CreateTaskRequest
+      >(
+        `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+        requestBody,
+      );
+
+      setTaskResult((current) =>
+        current?.projectId === projectId
+          ? { ...current, tasks: [task, ...current.tasks] }
+          : current,
+      );
+      setTaskForm(initialTaskForm);
+      setShowCreateForm(false);
+    } catch (error: unknown) {
+      setCreateError(
+        error instanceof Error
+          ? error.message
+          : "Unable to create the task. Please try again.",
+      );
+    } finally {
+      setIsCreating(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -238,8 +350,146 @@ function ProjectDetailsPage() {
                   <option value="done">Done</option>
                 </select>
               </label>
+              <Button
+                type="button"
+                disabled={
+                  !projectId ||
+                  isLoading ||
+                  Boolean(displayErrorMessage) ||
+                  isCreating
+                }
+                onClick={() => {
+                  if (showCreateForm) {
+                    setTaskForm(initialTaskForm);
+                  }
+                  setCreateError("");
+                  setShowCreateForm((isOpen) => !isOpen);
+                }}
+              >
+                <Plus className="size-4" aria-hidden="true" />
+                {showCreateForm ? "Cancel" : "Create task"}
+              </Button>
             </div>
           </div>
+
+          {showCreateForm && (
+            <form
+              onSubmit={createTask}
+              className="mb-5 rounded-2xl border bg-card p-5 shadow-sm sm:p-6"
+            >
+              <h3 className="font-semibold">Create a task</h3>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="task-title">Title</Label>
+                  <Input
+                    id="task-title"
+                    name="title"
+                    value={taskForm.title}
+                    onChange={(event) =>
+                      updateTaskForm("title", event.target.value)
+                    }
+                    placeholder="What needs to be done?"
+                    disabled={isCreating}
+                  />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="task-description">
+                    Description <span className="text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    id="task-description"
+                    name="description"
+                    value={taskForm.description}
+                    onChange={(event) =>
+                      updateTaskForm("description", event.target.value)
+                    }
+                    placeholder="Add a few details"
+                    disabled={isCreating}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="task-status">Status</Label>
+                  <select
+                    id="task-status"
+                    name="status"
+                    value={taskForm.status}
+                    onChange={(event) =>
+                      updateTaskForm(
+                        "status",
+                        event.target.value as TaskStatus,
+                      )
+                    }
+                    disabled={isCreating}
+                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="todo">To do</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="done">Done</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="task-priority">Priority</Label>
+                  <select
+                    id="task-priority"
+                    name="priority"
+                    value={taskForm.priority}
+                    onChange={(event) =>
+                      updateTaskForm(
+                        "priority",
+                        event.target.value as TaskPriority,
+                      )
+                    }
+                    disabled={isCreating}
+                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="task-due-date">
+                    Due date <span className="text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    id="task-due-date"
+                    name="dueDate"
+                    type="date"
+                    value={taskForm.dueDate}
+                    onChange={(event) =>
+                      updateTaskForm("dueDate", event.target.value)
+                    }
+                    disabled={isCreating}
+                  />
+                </div>
+              </div>
+              {createError && (
+                <p
+                  className="mt-4 text-sm text-destructive"
+                  role="alert"
+                >
+                  {createError}
+                </p>
+              )}
+              <div className="mt-5 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isCreating}
+                  onClick={() => {
+                    setTaskForm(initialTaskForm);
+                    setCreateError("");
+                    setShowCreateForm(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isCreating}>
+                  {isCreating ? "Creating..." : "Create task"}
+                </Button>
+              </div>
+            </form>
+          )}
 
           {isLoading ? (
             <p className="rounded-2xl border bg-background px-5 py-14 text-center text-sm text-muted-foreground" role="status">
