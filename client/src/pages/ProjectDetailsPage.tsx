@@ -1,3 +1,4 @@
+// Displays and manages tasks, filters, and progress for one project.
 import { useEffect, useState, type FormEvent } from "react";
 import {
   ArrowLeft,

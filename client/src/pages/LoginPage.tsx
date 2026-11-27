@@ -1,3 +1,4 @@
+// Renders the login form and establishes the authenticated user session.
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";

@@ -1,3 +1,4 @@
+// Displays the user's projects and supports project management.
 import {
   ArrowUpRight,
   CheckCircle2,
@@ -324,16 +325,6 @@ function ProjectsPage() {
               TaskBoard
             </span>
           </Link>
-
-          <nav className="hidden items-center gap-1 sm:flex" aria-label="Main">
-            <Link
-              to="/projects"
-              className="rounded-lg bg-muted px-3 py-2 text-sm font-medium text-foreground"
-              aria-current="page"
-            >
-              Projects
-            </Link>
-          </nav>
 
           <div className="flex items-center gap-3">
             <span className="hidden text-sm font-medium sm:inline">

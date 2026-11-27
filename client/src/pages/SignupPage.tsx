@@ -1,3 +1,4 @@
+// Renders the signup form and creates an authenticated user session.
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
