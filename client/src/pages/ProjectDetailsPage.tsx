@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import LogoutButton from "@/components/LogoutButton";
 
 type TaskStatus = "todo" | "in_progress" | "done";
 type TaskPriority = "low" | "medium" | "high";
@@ -194,12 +195,15 @@ function ProjectDetailsPage() {
           <Link to="/projects" className="text-lg font-semibold tracking-tight">
             TaskBoard
           </Link>
-          <Link
-            to="/projects"
-            className="text-sm font-medium text-muted-foreground hover:text-foreground"
-          >
-            All projects
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              to="/projects"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              All projects
+            </Link>
+            <LogoutButton />
+          </div>
         </div>
       </header>
 
