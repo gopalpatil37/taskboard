@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Clock3,
   FolderKanban,
+  Loader2,
   Pencil,
   Plus,
   Trash2,
@@ -44,6 +45,10 @@ type RenameProjectResponse = {
   project: Pick<Project, "id" | "name">;
 };
 
+type DeleteProjectResponse = {
+  message: string;
+};
+
 let projectsRequest: Promise<ProjectsResponse> | null = null;
 
 // Reuse a pending request so React StrictMode does not load projects twice.
@@ -71,6 +76,13 @@ function ProjectsPage() {
   );
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameError, setRenameError] = useState("");
+  const [deletingProjectId, setDeletingProjectId] = useState<number | null>(
+    null,
+  );
+  const [deleteError, setDeleteError] = useState<{
+    projectId: number;
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -201,6 +213,41 @@ function ProjectsPage() {
       );
     } finally {
       setIsRenaming(false);
+    }
+  }
+
+  async function deleteProject(project: Project) {
+    if (deletingProjectId !== null) {
+      return;
+    }
+
+    // Confirm first because deleting a project also deletes its tasks.
+    const confirmed = window.confirm(
+      `Delete "${project.name}" and its tasks? This action cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingProjectId(project.id);
+    setDeleteError(null);
+
+    try {
+      await api.delete<DeleteProjectResponse>(`/api/projects/${project.id}`);
+      // Remove the project from the page after the server confirms deletion.
+      setProjects((currentProjects) =>
+        currentProjects.filter((currentProject) => currentProject.id !== project.id),
+      );
+    } catch (error) {
+      setDeleteError({
+        projectId: project.id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to delete the project. Please try again.",
+      });
+    } finally {
+      setDeletingProjectId(null);
     }
   }
 
@@ -481,6 +528,12 @@ function ProjectsPage() {
                           </form>
                         )}
 
+                        {deleteError?.projectId === project.id && (
+                          <p className="mt-3 text-sm text-destructive" role="alert">
+                            {deleteError.message}
+                          </p>
+                        )}
+
                         <div className="mt-auto flex justify-end gap-1 pt-5">
                           <Button
                             type="button"
@@ -488,7 +541,7 @@ function ProjectsPage() {
                             size="icon-sm"
                             aria-label={`Rename ${project.name}`}
                             title="Rename project"
-                            disabled={isRenaming}
+                            disabled={isRenaming || deletingProjectId !== null}
                             onClick={() => {
                               setRenameError("");
                               setRenamingProjectId((currentId) =>
@@ -502,11 +555,24 @@ function ProjectsPage() {
                             type="button"
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={`Delete ${project.name}`}
-                            title="Project deletion will be added later"
-                            disabled
+                            aria-label={
+                              deletingProjectId === project.id
+                                ? `Deleting ${project.name}`
+                                : `Delete ${project.name}`
+                            }
+                            title={
+                              deletingProjectId === project.id
+                                ? "Deleting project..."
+                                : "Delete project"
+                            }
+                            disabled={deletingProjectId !== null}
+                            onClick={() => deleteProject(project)}
                           >
-                            <Trash2 aria-hidden="true" />
+                            {deletingProjectId === project.id ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <Trash2 aria-hidden="true" />
+                            )}
                           </Button>
                           <Link
                             to={`/projects/${project.id}`}
