@@ -89,6 +89,7 @@ async function request<T>(
         method,
         headers,
         body: serializedBody,
+        // Authentication uses an HTTP-only cookie, so send it with API requests.
         credentials: "include",
       },
     );
@@ -132,6 +133,7 @@ async function request<T>(
     );
   }
 
+  // Convert the backend's shared error shape into one error type for the UI.
   if (!response.ok) {
     if (isApiFailure(payload)) {
       throw new ApiError(
@@ -148,6 +150,7 @@ async function request<T>(
     );
   }
 
+  // Return data only after validating the API's success envelope.
   const envelope: ApiEnvelope<T> | undefined = isApiSuccess<T>(payload)
     ? payload
     : isApiFailure(payload)

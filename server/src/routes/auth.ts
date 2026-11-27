@@ -219,6 +219,7 @@ authRoutes.post("/login", async (c) => {
       .where(eq(users.email, email))
       .limit(1);
 
+    // Compare the submitted password against its stored hash without exposing either value.
     // Use one response for both cases so the API does not reveal registered emails.
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return errorResponse(
