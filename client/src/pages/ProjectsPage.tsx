@@ -7,66 +7,140 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import LogoutButton from "@/components/LogoutButton";
+import { api } from "@/lib/api";
 
 type Project = {
-  id: string;
+  id: number;
   name: string;
-  description: string;
+  description: string | null;
   taskCount: number;
-  completedTasks: number;
-  updatedLabel: string;
 };
 
-const sampleProjects: Project[] = [
-  {
-    id: "1",
-    name: "Website Redesign",
-    description: "Refresh the company website with a clearer, more modern experience.",
-    taskCount: 18,
-    completedTasks: 11,
-    updatedLabel: "Updated 2 hours ago",
-  },
-  {
-    id: "2",
-    name: "Mobile App Launch",
-    description: "Plan the release of the new mobile app across iOS and Android.",
-    taskCount: 24,
-    completedTasks: 8,
-    updatedLabel: "Updated yesterday",
-  },
-  {
-    id: "3",
-    name: "Customer Portal",
-    description: "Build a self-service space for customer accounts and support.",
-    taskCount: 12,
-    completedTasks: 12,
-    updatedLabel: "Updated 3 days ago",
-  },
-  {
-    id: "4",
-    name: "Q4 Planning",
-    description: "Collect ideas and prepare priorities for the next quarter.",
-    taskCount: 0,
-    completedTasks: 0,
-    updatedLabel: "Created today",
-  },
-];
+type ProjectsResponse = {
+  projects: Project[];
+};
+
+type CreateProjectRequest = {
+  name: string;
+  description?: string;
+};
+
+type CreateProjectResponse = {
+  project: Pick<Project, "id" | "name" | "description">;
+};
+
+let projectsRequest: Promise<ProjectsResponse> | null = null;
+
+function getProjects(): Promise<ProjectsResponse> {
+  if (!projectsRequest) {
+    projectsRequest = api
+      .get<ProjectsResponse>("/api/projects")
+      .finally(() => {
+        projectsRequest = null;
+      });
+  }
+
+  return projectsRequest;
+}
 
 function ProjectsPage() {
-  const totalTasks = sampleProjects.reduce(
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isCreateFormOpen, setIsCreateFormOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    getProjects()
+      .then(({ projects: userProjects }) => {
+        if (active) {
+          setProjects(userProjects);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "Unable to load your projects. Please try again.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const totalTasks = projects.reduce(
     (total, project) => total + project.taskCount,
     0,
   );
-  const completedTasks = sampleProjects.reduce(
-    (total, project) => total + project.completedTasks,
-    0,
-  );
-  const remainingTasks = totalTasks - completedTasks;
+  const projectsWithTasks = projects.filter(
+    (project) => project.taskCount > 0,
+  ).length;
+  const projectsWithoutTasks = projects.length - projectsWithTasks;
+
+  async function createProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isCreating) {
+      return;
+    }
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const name = String(formData.get("name") ?? "").trim();
+    const description = String(formData.get("description") ?? "").trim();
+
+    if (!name) {
+      setCreateError("Project name is required.");
+      return;
+    }
+
+    const body: CreateProjectRequest = description
+      ? { name, description }
+      : { name };
+
+    setIsCreating(true);
+    setCreateError("");
+
+    try {
+      const { project } = await api.post<
+        CreateProjectResponse,
+        CreateProjectRequest
+      >("/api/projects", body);
+
+      setProjects((currentProjects) => [
+        ...currentProjects,
+        { ...project, taskCount: 0 },
+      ]);
+      form.reset();
+      setIsCreateFormOpen(false);
+    } catch (error) {
+      setCreateError(
+        error instanceof Error
+          ? error.message
+          : "Unable to create the project. Please try again.",
+      );
+    } finally {
+      setIsCreating(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -120,185 +194,218 @@ function ProjectsPage() {
             </p>
           </div>
 
-          <Button type="button" className="h-10 w-full sm:w-auto">
+          <Button
+            type="button"
+            className="h-10 w-full sm:w-auto"
+            onClick={() => {
+              setCreateError("");
+              setIsCreateFormOpen((isOpen) => !isOpen);
+            }}
+          >
             <Plus className="size-4" aria-hidden="true" />
             Create project
           </Button>
         </section>
 
-        <section
-          className="mt-8 grid gap-3 sm:grid-cols-3 sm:gap-4"
-          aria-label="Task overview"
-        >
-          <SummaryCard
-            label="Projects"
-            value={sampleProjects.length}
-            icon={<FolderKanban className="size-4" aria-hidden="true" />}
-          />
-          <SummaryCard
-            label="Tasks completed"
-            value={completedTasks}
-            icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
-          />
-          <SummaryCard
-            label="Tasks remaining"
-            value={remainingTasks}
-            icon={<Clock3 className="size-4" aria-hidden="true" />}
-          />
-        </section>
+        {isCreateFormOpen && (
+          <section className="mt-6 rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+            <h2 className="font-semibold">Create a project</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Add a name and optional description for your project.
+            </p>
+            <form
+              onSubmit={createProject}
+              className="mt-4 grid gap-4 sm:grid-cols-2"
+            >
+              <div className="space-y-2">
+                <Label htmlFor="project-name">Project name</Label>
+                <Input
+                  id="project-name"
+                  name="name"
+                  placeholder="e.g. Website redesign"
+                  maxLength={150}
+                  required
+                  autoFocus
+                  disabled={isCreating}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="project-description">Description</Label>
+                <Input
+                  id="project-description"
+                  name="description"
+                  placeholder="What is this project about?"
+                  disabled={isCreating}
+                />
+              </div>
+              {createError && (
+                <p
+                  className="text-sm text-destructive sm:col-span-2"
+                  role="alert"
+                >
+                  {createError}
+                </p>
+              )}
+              <div className="flex justify-end gap-2 sm:col-span-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isCreating}
+                  onClick={() => {
+                    setCreateError("");
+                    setIsCreateFormOpen(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isCreating}>
+                  {isCreating ? "Creating..." : "Create project"}
+                </Button>
+              </div>
+            </form>
+          </section>
+        )}
 
-        <section className="mt-10">
-          <div className="mb-5 flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight">
-                Your projects
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {sampleProjects.length} projects in your workspace
-              </p>
-            </div>
+        {isLoading ? (
+          <div
+            className="mt-10 rounded-2xl border bg-background px-5 py-14 text-center text-sm text-muted-foreground"
+            role="status"
+          >
+            Loading your projects...
           </div>
-
-          {sampleProjects.length === 0 ? (
-            <div className="rounded-2xl border border-dashed bg-background px-5 py-14 text-center">
-              <FolderKanban
-                className="mx-auto size-9 text-muted-foreground"
-                aria-hidden="true"
+        ) : errorMessage ? (
+          <div
+            className="mt-10 rounded-2xl border bg-background px-5 py-8 text-center text-sm text-destructive"
+            role="alert"
+          >
+            We couldn&apos;t load your projects: {errorMessage}
+          </div>
+        ) : (
+          <>
+            <section
+              className="mt-8 grid gap-3 sm:grid-cols-3 sm:gap-4"
+              aria-label="Project overview"
+            >
+              <SummaryCard
+                label="Projects"
+                value={projects.length}
+                icon={<FolderKanban className="size-4" aria-hidden="true" />}
               />
-              <h3 className="mt-4 font-semibold">No projects yet</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Create a project to start organizing your tasks.
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {sampleProjects.map((project) => {
-                const remaining = project.taskCount - project.completedTasks;
-                const progress =
-                  project.taskCount === 0
-                    ? 0
-                    : Math.round(
-                        (project.completedTasks / project.taskCount) * 100,
-                      );
-                const isComplete =
-                  project.taskCount > 0 &&
-                  project.completedTasks === project.taskCount;
+              <SummaryCard
+                label="Total tasks"
+                value={totalTasks}
+                icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
+              />
+              <SummaryCard
+                label="Projects without tasks"
+                value={projectsWithoutTasks}
+                icon={<Clock3 className="size-4" aria-hidden="true" />}
+              />
+            </section>
 
-                return (
-                  <article
-                    key={project.id}
-                    className="flex min-w-0 flex-col rounded-2xl border bg-card p-5 shadow-sm transition-shadow hover:shadow-md sm:p-6"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                          <FolderKanban
-                            className="size-5"
-                            aria-hidden="true"
-                          />
-                        </span>
-                        <div className="min-w-0">
-                          <h3 className="break-words font-semibold">
-                            {project.name}
-                          </h3>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {project.taskCount}{" "}
-                            {project.taskCount === 1 ? "task" : "tasks"}
-                          </p>
-                        </div>
-                      </div>
+            <section className="mt-10">
+              <div className="mb-5 flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-semibold tracking-tight">
+                    Your projects
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {projects.length}{" "}
+                    {projects.length === 1 ? "project" : "projects"} in your
+                    workspace
+                  </p>
+                </div>
+              </div>
 
-                      <Badge variant={isComplete ? "default" : "secondary"}>
-                        {isComplete ? "Complete" : "In progress"}
-                      </Badge>
-                    </div>
+              {projects.length === 0 ? (
+                <div className="rounded-2xl border border-dashed bg-background px-5 py-14 text-center">
+                  <FolderKanban
+                    className="mx-auto size-9 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <h3 className="mt-4 font-semibold">No projects yet</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Create a project to start organizing your tasks.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {projects.map((project) => {
+                    const hasTasks = project.taskCount > 0;
 
-                    <p className="mt-4 min-h-10 text-sm leading-5 text-muted-foreground">
-                      {project.description}
-                    </p>
-
-                    <div className="mt-5">
-                      <div className="mb-2 flex items-center justify-between text-xs">
-                        <span className="font-medium text-muted-foreground">
-                          Progress
-                        </span>
-                        <span className="font-semibold">{progress}%</span>
-                      </div>
-                      <div
-                        className="h-2 overflow-hidden rounded-full bg-muted"
-                        role="progressbar"
-                        aria-label={`${project.name} completion`}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={progress}
+                    return (
+                      <article
+                        key={project.id}
+                        className="flex min-w-0 flex-col rounded-2xl border bg-card p-5 shadow-sm transition-shadow hover:shadow-md sm:p-6"
                       >
-                        <div
-                          className="h-full rounded-full bg-primary transition-all"
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                    </div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                              <FolderKanban
+                                className="size-5"
+                                aria-hidden="true"
+                              />
+                            </span>
+                            <div className="min-w-0">
+                              <h3 className="break-words font-semibold">
+                                {project.name}
+                              </h3>
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {project.taskCount}{" "}
+                                {project.taskCount === 1 ? "task" : "tasks"}
+                              </p>
+                            </div>
+                          </div>
 
-                    <div className="mt-5 grid grid-cols-2 gap-3 rounded-xl bg-muted/50 p-3">
-                      <div>
-                        <p className="text-xs text-muted-foreground">
-                          Completed
-                        </p>
-                        <p className="mt-1 text-sm font-semibold">
-                          {project.completedTasks}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">
-                          Remaining
-                        </p>
-                        <p className="mt-1 text-sm font-semibold">{remaining}</p>
-                      </div>
-                    </div>
+                          <Badge variant={hasTasks ? "default" : "secondary"}>
+                            {hasTasks ? "Has tasks" : "No tasks"}
+                          </Badge>
+                        </div>
 
-                    <div className="mt-4 flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate text-xs text-muted-foreground">
-                        {project.updatedLabel}
-                      </span>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Edit ${project.name}`}
-                          title="Project editing will be added later"
-                          disabled
-                        >
-                          <Pencil aria-hidden="true" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Delete ${project.name}`}
-                          title="Project deletion will be added later"
-                          disabled
-                        >
-                          <Trash2 aria-hidden="true" />
-                        </Button>
-                        <Link
-                          to={`/projects/${project.id}`}
-                          className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-sm font-medium text-primary hover:bg-primary/10"
-                        >
-                          View
-                          <ArrowUpRight
-                            className="size-4"
-                            aria-hidden="true"
-                          />
-                        </Link>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                        <p className="mt-4 min-h-10 text-sm leading-5 text-muted-foreground">
+                          {project.description ?? "No description provided."}
+                        </p>
+
+                        <div className="mt-auto flex justify-end gap-1 pt-5">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Edit ${project.name}`}
+                            title="Project editing will be added later"
+                            disabled
+                          >
+                            <Pencil aria-hidden="true" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Delete ${project.name}`}
+                            title="Project deletion will be added later"
+                            disabled
+                          >
+                            <Trash2 aria-hidden="true" />
+                          </Button>
+                          <Link
+                            to={`/projects/${project.id}`}
+                            className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-sm font-medium text-primary hover:bg-primary/10"
+                          >
+                            View
+                            <ArrowUpRight
+                              className="size-4"
+                              aria-hidden="true"
+                            />
+                          </Link>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </>
+        )}
       </main>
     </div>
   );
