@@ -4,6 +4,7 @@ import { serve } from '@hono/node-server';
 import { env } from './env.js';
 import { authRoutes } from './routes/auth.js';
 import { projectsRoutes } from './routes/projects.js';
+import { tasksRoutes } from './routes/tasks.js';
 
 const app = new Hono();
 
@@ -17,6 +18,7 @@ app.use('/api/*', cors({
 
 app.route('/api/auth', authRoutes);
 app.route('/api/projects', projectsRoutes);
+app.route('/api', tasksRoutes);
 
 app.get('/', (c) => {
   return c.json({
