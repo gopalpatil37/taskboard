@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import LogoutButton from "@/components/LogoutButton";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { AuthOutletContext } from "@/services/authService";
 
 type Project = {
@@ -50,6 +50,46 @@ type DeleteProjectResponse = {
   message: string;
 };
 
+type ProjectField = "name" | "description";
+type ProjectFieldErrors = Partial<Record<ProjectField, string>>;
+
+function validateProjectName(value: string): string | undefined {
+  const name = value.trim();
+  if (!name) {
+    return "Project name is required.";
+  }
+  if (name.length > 150) {
+    return "Project name is too long.";
+  }
+}
+
+function getProjectFormErrors(
+  error: unknown,
+  fallback: string,
+  fields: readonly ProjectField[] = ["name", "description"],
+) {
+  const message =
+    error instanceof Error && error.message ? error.message : fallback;
+  const fieldErrors: ProjectFieldErrors = {};
+  const formMessages: string[] = [];
+
+  if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
+    for (const issue of message.split(";")) {
+      const match = /^(name|description):\s*(.+)$/.exec(issue.trim());
+      const field = match?.[1] as ProjectField | undefined;
+      if (match && field && fields.includes(field)) {
+        fieldErrors[field] = match[2];
+      } else {
+        formMessages.push(issue.trim());
+      }
+    }
+  } else {
+    formMessages.push(message);
+  }
+
+  return { fieldErrors, formError: formMessages.join("; ") };
+}
+
 let projectsRequest: Promise<ProjectsResponse> | null = null;
 
 // Reuse a pending request so React StrictMode does not load projects twice.
@@ -81,11 +121,15 @@ function ProjectsPage() {
   const [isCreateFormOpen, setIsCreateFormOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [createFieldErrors, setCreateFieldErrors] =
+    useState<ProjectFieldErrors>({});
   const [renamingProjectId, setRenamingProjectId] = useState<number | null>(
     null,
   );
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameError, setRenameError] = useState("");
+  const [renameFieldErrors, setRenameFieldErrors] =
+    useState<ProjectFieldErrors>({});
   const [deletingProjectId, setDeletingProjectId] = useState<number | null>(
     null,
   );
@@ -139,13 +183,16 @@ function ProjectsPage() {
       return;
     }
 
+    setCreateError("");
+    setCreateFieldErrors({});
     const form = event.currentTarget;
     const formData = new FormData(form);
     const name = String(formData.get("name") ?? "").trim();
     const description = String(formData.get("description") ?? "").trim();
 
-    if (!name) {
-      setCreateError("Project name is required.");
+    const nameError = validateProjectName(name);
+    if (nameError) {
+      setCreateFieldErrors({ name: nameError });
       return;
     }
 
@@ -154,7 +201,6 @@ function ProjectsPage() {
       : { name };
 
     setIsCreating(true);
-    setCreateError("");
 
     try {
       const { project } = await api.post<
@@ -170,11 +216,12 @@ function ProjectsPage() {
       form.reset();
       setIsCreateFormOpen(false);
     } catch (error) {
-      setCreateError(
-        error instanceof Error
-          ? error.message
-          : "Unable to create the project. Please try again.",
+      const errors = getProjectFormErrors(
+        error,
+        "Unable to create the project. Please try again.",
       );
+      setCreateFieldErrors(errors.fieldErrors);
+      setCreateError(errors.formError);
     } finally {
       setIsCreating(false);
     }
@@ -190,16 +237,18 @@ function ProjectsPage() {
       return;
     }
 
+    setRenameError("");
+    setRenameFieldErrors({});
     const formData = new FormData(event.currentTarget);
     const name = String(formData.get("name") ?? "").trim();
 
-    if (!name) {
-      setRenameError("Project name is required.");
+    const nameError = validateProjectName(name);
+    if (nameError) {
+      setRenameFieldErrors({ name: nameError });
       return;
     }
 
     setIsRenaming(true);
-    setRenameError("");
 
     try {
       const { project: updatedProject } = await api.patch<
@@ -216,11 +265,13 @@ function ProjectsPage() {
       );
       setRenamingProjectId(null);
     } catch (error) {
-      setRenameError(
-        error instanceof Error
-          ? error.message
-          : "Unable to rename the project. Please try again.",
+      const errors = getProjectFormErrors(
+        error,
+        "Unable to rename the project. Please try again.",
+        ["name"],
       );
+      setRenameFieldErrors(errors.fieldErrors);
+      setRenameError(errors.formError);
     } finally {
       setIsRenaming(false);
     }
@@ -318,6 +369,7 @@ function ProjectsPage() {
             className="h-10 w-full sm:w-auto"
             onClick={() => {
               setCreateError("");
+              setCreateFieldErrors({});
               setIsCreateFormOpen((isOpen) => !isOpen);
             }}
           >
@@ -343,10 +395,28 @@ function ProjectsPage() {
                   name="name"
                   placeholder="e.g. Website redesign"
                   maxLength={150}
-                  required
                   autoFocus
                   disabled={isCreating}
+                  aria-invalid={Boolean(createFieldErrors.name)}
+                  aria-describedby={
+                    createFieldErrors.name ? "project-name-error" : undefined
+                  }
+                  onChange={(event) =>
+                    setCreateFieldErrors((current) => ({
+                      ...current,
+                      name: validateProjectName(event.target.value),
+                    }))
+                  }
                 />
+                {createFieldErrors.name && (
+                  <p
+                    id="project-name-error"
+                    className="text-sm text-destructive"
+                    role="alert"
+                  >
+                    {createFieldErrors.name}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="project-description">Description</Label>
@@ -355,7 +425,28 @@ function ProjectsPage() {
                   name="description"
                   placeholder="What is this project about?"
                   disabled={isCreating}
+                  aria-invalid={Boolean(createFieldErrors.description)}
+                  aria-describedby={
+                    createFieldErrors.description
+                      ? "project-description-error"
+                      : undefined
+                  }
+                  onChange={() =>
+                    setCreateFieldErrors((current) => ({
+                      ...current,
+                      description: undefined,
+                    }))
+                  }
                 />
+                {createFieldErrors.description && (
+                  <p
+                    id="project-description-error"
+                    className="text-sm text-destructive"
+                    role="alert"
+                  >
+                    {createFieldErrors.description}
+                  </p>
+                )}
               </div>
               {createError && (
                 <p
@@ -372,6 +463,7 @@ function ProjectsPage() {
                   disabled={isCreating}
                   onClick={() => {
                     setCreateError("");
+                    setCreateFieldErrors({});
                     setIsCreateFormOpen(false);
                   }}
                 >
@@ -501,10 +593,31 @@ function ProjectsPage() {
                                 name="name"
                                 defaultValue={project.name}
                                 maxLength={150}
-                                required
                                 autoFocus
                                 disabled={isRenaming}
+                                aria-invalid={Boolean(renameFieldErrors.name)}
+                                aria-describedby={
+                                  renameFieldErrors.name
+                                    ? `project-rename-error-${project.id}`
+                                    : undefined
+                                }
+                                onChange={(event) =>
+                                  setRenameFieldErrors({
+                                    name: validateProjectName(
+                                      event.target.value,
+                                    ),
+                                  })
+                                }
                               />
+                              {renameFieldErrors.name && (
+                                <p
+                                  id={`project-rename-error-${project.id}`}
+                                  className="text-sm text-destructive"
+                                  role="alert"
+                                >
+                                  {renameFieldErrors.name}
+                                </p>
+                              )}
                             </div>
                             {renameError && (
                               <p
@@ -523,6 +636,7 @@ function ProjectsPage() {
                                 onClick={() => {
                                   setRenamingProjectId(null);
                                   setRenameError("");
+                                  setRenameFieldErrors({});
                                 }}
                               >
                                 Cancel
@@ -554,6 +668,7 @@ function ProjectsPage() {
                             disabled={isRenaming || deletingProjectId !== null}
                             onClick={() => {
                               setRenameError("");
+                              setRenameFieldErrors({});
                               setRenamingProjectId((currentId) =>
                                 currentId === project.id ? null : project.id,
                               );

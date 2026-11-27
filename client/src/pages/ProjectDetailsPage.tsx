@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import LogoutButton from "@/components/LogoutButton";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 
 type TaskStatus = "todo" | "in_progress" | "done";
 type TaskPriority = "low" | "medium" | "high";
@@ -95,6 +95,44 @@ type CreateTaskFormValues = {
   dueDate: string;
 };
 
+type TaskFormField = keyof CreateTaskFormValues;
+type TaskFieldErrors = Partial<Record<TaskFormField, string>>;
+
+function validateTaskTitle(value: string): string | undefined {
+  const title = value.trim();
+  if (!title) {
+    return "Task title is required.";
+  }
+  if (title.length > 200) {
+    return "Task title must be 200 characters or fewer.";
+  }
+}
+
+function getTaskFormErrors(error: unknown, fallback: string) {
+  const message =
+    error instanceof Error && error.message ? error.message : fallback;
+  const fieldErrors: TaskFieldErrors = {};
+  const formMessages: string[] = [];
+
+  if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
+    for (const issue of message.split(";")) {
+      const match =
+        /^(title|description|status|priority|dueDate):\s*(.+)$/.exec(
+          issue.trim(),
+        );
+      if (match) {
+        fieldErrors[match[1] as TaskFormField] = match[2];
+      } else {
+        formMessages.push(issue.trim());
+      }
+    }
+  } else {
+    formMessages.push(message);
+  }
+
+  return { fieldErrors, formError: formMessages.join("; ") };
+}
+
 const initialTaskForm: CreateTaskFormValues = {
   title: "",
   description: "",
@@ -133,6 +171,7 @@ function ProjectDetailsPage() {
     useState<CreateTaskFormValues>(initialTaskForm);
   const [isSavingTask, setIsSavingTask] = useState(false);
   const [taskFormError, setTaskFormError] = useState("");
+  const [taskFieldErrors, setTaskFieldErrors] = useState<TaskFieldErrors>({});
   const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<{
     taskId: number;
@@ -278,7 +317,11 @@ function ProjectDetailsPage() {
     value: CreateTaskFormValues[Field],
   ) {
     setTaskForm((current) => ({ ...current, [field]: value }));
-    setTaskFormError("");
+    setTaskFieldErrors((current) => ({
+      ...current,
+      [field]:
+        field === "title" ? validateTaskTitle(String(value)) : undefined,
+    }));
   }
 
   function closeTaskForm() {
@@ -286,6 +329,7 @@ function ProjectDetailsPage() {
     setEditingTaskId(null);
     setTaskForm(initialTaskForm);
     setTaskFormError("");
+    setTaskFieldErrors({});
   }
 
   function openEditForm(task: Task) {
@@ -298,6 +342,7 @@ function ProjectDetailsPage() {
     });
     setEditingTaskId(task.id);
     setTaskFormError("");
+    setTaskFieldErrors({});
     setShowCreateForm(true);
   }
 
@@ -307,17 +352,15 @@ function ProjectDetailsPage() {
       return;
     }
 
+    setTaskFormError("");
+    setTaskFieldErrors({});
     const title = taskForm.title.trim();
-    if (!title) {
-      setTaskFormError("Task title is required.");
-      return;
-    }
-    if (title.length > 200) {
-      setTaskFormError("Task title must be 200 characters or fewer.");
+    const titleError = validateTaskTitle(title);
+    if (titleError) {
+      setTaskFieldErrors({ title: titleError });
       return;
     }
 
-    setTaskFormError("");
     setIsSavingTask(true);
 
     try {
@@ -355,11 +398,12 @@ function ProjectDetailsPage() {
 
       closeTaskForm();
     } catch (error: unknown) {
-      setTaskFormError(
-        error instanceof Error
-          ? error.message
-          : "Unable to save the task. Please try again.",
+      const errors = getTaskFormErrors(
+        error,
+        "Unable to save the task. Please try again.",
       );
+      setTaskFieldErrors(errors.fieldErrors);
+      setTaskFormError(errors.formError);
     } finally {
       setIsSavingTask(false);
     }
@@ -555,6 +599,7 @@ function ProjectDetailsPage() {
                   setEditingTaskId(null);
                   setTaskForm(initialTaskForm);
                   setTaskFormError("");
+                  setTaskFieldErrors({});
                   setShowCreateForm(true);
                 }}
               >
@@ -584,7 +629,20 @@ function ProjectDetailsPage() {
                     }
                     placeholder="What needs to be done?"
                     disabled={isTaskActionPending}
+                    aria-invalid={Boolean(taskFieldErrors.title)}
+                    aria-describedby={
+                      taskFieldErrors.title ? "task-title-error" : undefined
+                    }
                   />
+                  {taskFieldErrors.title && (
+                    <p
+                      id="task-title-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.title}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="task-description">
@@ -599,7 +657,22 @@ function ProjectDetailsPage() {
                     }
                     placeholder="Add a few details"
                     disabled={isTaskActionPending}
+                    aria-invalid={Boolean(taskFieldErrors.description)}
+                    aria-describedby={
+                      taskFieldErrors.description
+                        ? "task-description-error"
+                        : undefined
+                    }
                   />
+                  {taskFieldErrors.description && (
+                    <p
+                      id="task-description-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.description}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="task-status">Status</Label>
@@ -615,11 +688,24 @@ function ProjectDetailsPage() {
                     }
                     disabled={isTaskActionPending}
                     className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-invalid={Boolean(taskFieldErrors.status)}
+                    aria-describedby={
+                      taskFieldErrors.status ? "task-status-error" : undefined
+                    }
                   >
                     <option value="todo">To do</option>
                     <option value="in_progress">In progress</option>
                     <option value="done">Done</option>
                   </select>
+                  {taskFieldErrors.status && (
+                    <p
+                      id="task-status-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.status}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="task-priority">Priority</Label>
@@ -635,11 +721,26 @@ function ProjectDetailsPage() {
                     }
                     disabled={isTaskActionPending}
                     className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-invalid={Boolean(taskFieldErrors.priority)}
+                    aria-describedby={
+                      taskFieldErrors.priority
+                        ? "task-priority-error"
+                        : undefined
+                    }
                   >
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
                     <option value="high">High</option>
                   </select>
+                  {taskFieldErrors.priority && (
+                    <p
+                      id="task-priority-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.priority}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="task-due-date">
@@ -654,7 +755,20 @@ function ProjectDetailsPage() {
                       updateTaskForm("dueDate", event.target.value)
                     }
                     disabled={isTaskActionPending}
+                    aria-invalid={Boolean(taskFieldErrors.dueDate)}
+                    aria-describedby={
+                      taskFieldErrors.dueDate ? "task-due-date-error" : undefined
+                    }
                   />
+                  {taskFieldErrors.dueDate && (
+                    <p
+                      id="task-due-date-error"
+                      className="text-sm text-destructive"
+                      role="alert"
+                    >
+                      {taskFieldErrors.dueDate}
+                    </p>
+                  )}
                 </div>
               </div>
               {taskFormError && (
