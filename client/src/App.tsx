@@ -38,9 +38,9 @@ function AuthenticationRoutes() {
   const [errorMessage, setErrorMessage] = useState("");
   const [retryCount, setRetryCount] = useState(0);
   const { pathname } = useLocation();
-  const isProtectedRoute =
-    pathname === "/projects" || pathname.startsWith("/projects/");
-  const isGuestRoute = pathname === "/login" || pathname === "/signup";
+  const isGuestRoute =
+    pathname === "/" || pathname === "/login" || pathname === "/signup";
+  const isProtectedRoute = !isGuestRoute;
   const skipNextCheck = useRef(false);
   const hasCheckedInitialRoute = useRef(false);
 
@@ -164,6 +164,7 @@ function App() {
             path="/projects/:projectId"
             element={<ProjectDetailsPage />}
           />
+          <Route path="*" element={<Navigate to="/projects" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

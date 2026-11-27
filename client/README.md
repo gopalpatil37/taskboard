@@ -1,5 +1,23 @@
 # React + TypeScript + Vite
 
+## TaskBoard authentication
+
+TaskBoard keeps the signed JWT in the `taskboard_auth` HTTP-only cookie rather
+than browser storage. JavaScript cannot read this cookie, reducing the risk of
+token theft through cross-site scripting. The cookie uses `SameSite=Lax`, is
+`Secure` in production, and expires after seven days.
+
+On startup and page refresh, the client calls `GET /api/auth/me` to restore the
+authenticated user's public profile. Application routes require a valid session
+and redirect logged-out users to `/login`; `/login` and `/signup` remain
+accessible without a session. Unknown routes redirect to `/projects` after
+authentication. Logging out calls the API to clear the cookie.
+
+Signup requires a password with at least eight characters. Passwords are
+hashed with bcrypt before storage and are never included in API responses.
+Emails are normalized and protected by a database uniqueness constraint, so
+duplicate signups are rejected.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:
