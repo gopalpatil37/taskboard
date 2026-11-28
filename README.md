@@ -243,7 +243,7 @@ cp .env.example .env
 
 ### Configure server/.env
 
-Update your PostgreSQL credentials and JWT secret:
+The backend uses one `DATABASE_URL` connection string rather than separate `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, or `DB_SSL` variables. Make sure its username, password, and database name match the PostgreSQL user and database created above:
 
 ```env
 DATABASE_URL=postgresql://taskboard_user:your_secure_password@localhost:5432/taskboard
