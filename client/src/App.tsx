@@ -52,6 +52,13 @@ function AuthenticationRoutes() {
     skipNextCheck.current = true;
   }
 
+  function clearAuthenticatedUser() {
+    setUser(null);
+    setErrorMessage("");
+    setStatus("unauthenticated");
+    skipNextCheck.current = true;
+  }
+
   useEffect(() => {
     if (hasCheckedInitialRoute.current && skipNextCheck.current) {
       skipNextCheck.current = false;
@@ -147,6 +154,7 @@ function AuthenticationRoutes() {
   const outletContext: AuthOutletContext = {
     user,
     setAuthenticatedUser,
+    clearAuthenticatedUser,
   };
 
   return <Outlet context={outletContext} />;
