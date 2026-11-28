@@ -1,10 +1,12 @@
 import { useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { logout } from "@/services/authService";
+import type { AuthOutletContext } from "@/services/authService";
 
 export default function LogoutButton() {
   const navigate = useNavigate();
+  const { clearAuthenticatedUser } = useOutletContext<AuthOutletContext>();
   const requestInFlight = useRef(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -20,6 +22,7 @@ export default function LogoutButton() {
 
     try {
       await logout();
+      clearAuthenticatedUser();
       navigate("/login", { replace: true });
     } catch (error) {
       setErrorMessage(

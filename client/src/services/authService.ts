@@ -15,6 +15,7 @@ export interface AuthResponse {
 export interface AuthOutletContext {
   user: AuthUser | null;
   setAuthenticatedUser: (user: AuthUser) => void;
+  clearAuthenticatedUser: () => void;
 }
 
 /** The backend's confirmation returned after clearing the auth cookie. */

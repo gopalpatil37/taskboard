@@ -8,10 +8,12 @@ import { env } from "./env.js";
 export const AUTH_COOKIE_NAME = "taskboard_auth";
 export const AUTH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7;
 
+const isProduction = env.NODE_ENV === "production";
+
 const authCookieSettings = {
   httpOnly: true,
-  secure: env.NODE_ENV === "production",
-  sameSite: "None" as const,
+  secure: isProduction,
+  sameSite: isProduction ? ("None" as const) : ("Lax" as const),
   path: "/",
 };
 
