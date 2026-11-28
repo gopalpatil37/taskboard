@@ -59,6 +59,7 @@ taskboard/
 │   │   └── main.tsx                     # React application entry point
 │   │
 │   ├── .env.example                     # Frontend environment variables
+│   ├── vercel.json                      # API proxy and SPA route fallback
 │   ├── package.json                     # Frontend dependencies and scripts
 │   └── vite.config.ts                   # Vite configuration
 │
@@ -245,19 +246,10 @@ cp .env.example .env
 Update your PostgreSQL credentials and JWT secret:
 
 ```env
-PORT=3000
-
-CLIENT_ORIGIN=http://localhost:5173
-
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=taskboard
-DB_USER=taskboard_user
-DB_PASSWORD=your_secure_password
-DB_SSL=false
-
+DATABASE_URL=postgresql://taskboard_user:your_secure_password@localhost:5432/taskboard
 JWT_SECRET=your_random_secret_of_at_least_16_characters
-
+CLIENT_ORIGIN=http://localhost:5173
+PORT=3000
 NODE_ENV=development
 ```
 
@@ -369,7 +361,7 @@ GET /api/projects/1/tasks?status=todo&search=backend
 
 - Passwords are hashed using bcrypt before storage.
 - JWT authentication uses an HTTP-only cookie.
-- The cookie uses `SameSite=Lax`, `Secure` in production, and a seven-day expiration.
+- The cookie is `SameSite=Lax` with `Secure=false` locally, and `SameSite=None` with `Secure=true` in production. It expires after seven days.
 - Authentication middleware protects private API routes.
 - Zod validates incoming API data.
 - Ownership checks prevent users from accessing other users' projects and tasks.
@@ -408,7 +400,22 @@ Create local `.env` files using these templates.
 
 **Important:** Never commit actual `.env` files, passwords, JWT secrets or database credentials to GitHub.
 
-## 13. Future Improvements
+## 13. Deployment
+
+- **Frontend (Vercel):** [https://taskboard-rho-azure.vercel.app](https://taskboard-rho-azure.vercel.app)
+- **Backend (Render):** [https://taskboard-api-lm8y.onrender.com](https://taskboard-api-lm8y.onrender.com)
+
+The Vercel configuration in `client/vercel.json` proxies `/api/*` requests to the Render backend and serves the React app for frontend routes. The deployed frontend uses this same-origin API base:
+
+```env
+VITE_API_BASE_URL=https://taskboard-rho-azure.vercel.app
+```
+
+Configure the backend's `CLIENT_ORIGIN` as `https://taskboard-rho-azure.vercel.app` and set `NODE_ENV=production` in Render. Set `DATABASE_URL` and a strong `JWT_SECRET` in the hosting provider's environment settings; do not put production secrets in this repository. Redeploy the frontend after changing its Vercel environment variables.
+
+**Demo access:** Create an account using the Sign up page. This repository does not publish shared demo credentials.
+
+## 14. Future Improvements
 
 - Add automated API and frontend tests.
 - Implement pagination for task lists.
