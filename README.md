@@ -260,10 +260,10 @@ Generate your own secure JWT secret. Never use example credentials in production
 From the `server/` directory:
 
 ```bash
-npx tsx src/db/migrate.ts
+npm run db:migrate
 ```
 
-This applies the database migration files and creates the required tables.
+This applies the sorted SQL migration files in `server/drizzle/` to the PostgreSQL database configured by `DATABASE_URL`. Previously applied migrations are skipped.
 
 ### Start the Backend
 
