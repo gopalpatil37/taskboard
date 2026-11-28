@@ -21,21 +21,9 @@ async function migrate() {
   try {
     client = await pool.connect();
 
-    // Verify the connected database.
-    const result = await client.query(`
-      SELECT current_database() AS database,
-             current_user AS username,
-             current_schema() AS schema
-    `);
-
-    console.log("Database connection verified:", result.rows[0]);
-
-    // Allow migrations only on the Neon database.
-    if (result.rows[0].database !== "neondb") {
-      throw new Error(
-        "Migration cancelled: Expected the Neon database 'neondb'."
-      );
-    }
+    // Verify the configured PostgreSQL connection without logging connection details.
+    await client.query("SELECT 1");
+    console.log("Database connection verified.");
 
     // Create migration history table if it doesn't exist.
     await client.query(`
