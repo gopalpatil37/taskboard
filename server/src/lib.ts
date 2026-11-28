@@ -11,7 +11,7 @@ export const AUTH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7;
 const authCookieSettings = {
   httpOnly: true,
   secure: env.NODE_ENV === "production",
-  sameSite: "Lax" as const,
+  sameSite: "None" as const,
   path: "/",
 };
 
